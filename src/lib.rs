@@ -1,10 +1,16 @@
 #![allow(dead_code)]
+#![feature(test)]
 
 #[macro_use]
 extern crate arrayref;
+extern crate test;
 
+use std::fs::File;
 use std::slice;
 use std::str;
+
+use std::ffi::CStr;
+use std::os::raw::c_char;
 
 use memmap::Mmap;
 use num::Integer;
@@ -37,8 +43,8 @@ struct State<'a> {
     data: &'a [u8],
 }
 
-// Accessors for the various State header fields.
 impl State<'_> {
+    // Accessors for the various State header fields.
     fn fallback_state(&self) -> usize {
         u32::from_le_bytes(*array_ref!(self.data, 0, 4)) as usize
     }
@@ -98,8 +104,8 @@ struct Level<'a> {
     data: &'a [u8],
 }
 
-// Accessors for Level header fields.
 impl Level<'_> {
+    // Accessors for Level header fields.
     fn num_states(&self) -> u32 {
         u32::from_le_bytes(*array_ref!(self.data, 0, 4))
     }
@@ -159,12 +165,12 @@ impl Level<'_> {
             data: &self.data[base+offset..base+offset+state_len],
         })
     }
-    fn find_hyphen_values(&self, word: &str) -> Vec<u8> {
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
+        values.iter_mut().for_each(|x| *x = 0);
         let prep_word = ".".to_string() + word + ".";
         let word_bytes = prep_word.as_bytes();
-        let mut values: Vec<u8> = vec![0; word_bytes.len()];
         if word.len() < self.lh_min() + self.rh_min() {
-            return values;
+            return;
         }
         let start_state = self.get_state(0);
         let mut state = start_state;
@@ -195,25 +201,38 @@ impl Level<'_> {
                 state = self.get_state(state.unwrap().fallback_state());
             }
         }
-        values
     }
 }
 
 #[derive(Debug)]
-pub struct HyphDic<'a> {
-    levels: Vec<Level<'a>>,
+pub struct HyphDic {
+    mmap: Mmap,
 }
 
-impl HyphDic<'_> {
-    pub fn find_hyphen_values(&self, word: &str) -> Vec<u8> {
-        self.levels[1].find_hyphen_values(word)
+impl HyphDic {
+    fn level(&self, i: u32) -> Level {
+        let file_size = self.mmap.len() as usize;
+        let num_levels = u32::from_le_bytes(*array_ref!(self.mmap, 0, 4));
+        let offset = u32::from_le_bytes(*array_ref!(self.mmap, (4 + 4 * i) as usize, 4)) as usize;
+        let limit = if i == num_levels - 1 {
+            file_size
+        } else {
+            u32::from_le_bytes(*array_ref!(self.mmap, (4 + 4 * i + 4) as usize, 4)) as usize
+        };
+        Level {
+            data: self.mmap.get(offset..limit).unwrap()
+        }
+    }
+    pub fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
+        self.level(1).find_hyphen_values(word, values);
     }
     pub fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
-        let level = self.levels[1];
+        let level = self.level(1);
         if word.len() < level.lh_min() + level.rh_min() {
             return word.to_string();
         }
-        let values = level.find_hyphen_values(word);
+        let mut values: Vec<u8> = vec![0; word.len() + 2];
+        level.find_hyphen_values(word, &mut values);
         let mut result = word.to_string();
         for i in (level.lh_min() .. word.len() - level.rh_min() + 1).rev() {
             if values[i].is_odd() {
@@ -224,26 +243,101 @@ impl HyphDic<'_> {
     }
 }
 
-pub fn load_hyphenation(mmap: &Mmap) -> HyphDic {
-    let file_size = mmap.len() as usize;
-    let num_levels = u32::from_le_bytes(*array_ref!(mmap, 0, 4));
+pub fn load(dic_path: &str) -> Option<HyphDic> {
+    let file = match File::open(dic_path) {
+                Err(_) => return None,
+                Ok(file) => file,
+            };
+    let dic = HyphDic {
+        mmap: match unsafe { Mmap::map(&file)} {
+            Err(_) => return None,
+            Ok(mmap) => mmap,
+        }
+    };
+    Some(dic)
+}
 
-    let mut dic = HyphDic { levels: Vec::new() };
-    for i in 0..num_levels {
-        let offset = u32::from_le_bytes(*array_ref!(mmap, (4 + 4 * i) as usize, 4)) as usize;
-        let limit = if i == num_levels - 1 {
-            file_size
-        } else {
-            u32::from_le_bytes(*array_ref!(mmap, (4 + 4 * i + 4) as usize, 4)) as usize
+// C-callable function to load a hyphenation dictionary; returns null on failure.
+// `path` must be a valid UTF-8 string, or it will panic!
+#[no_mangle]
+pub extern "C" fn load_hyphenation(path: *const c_char) -> *const HyphDic {
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(str) => str,
+        Err(_) => return std::ptr::null(),
+    };
+    let hyph = Box::new(match load(path_str) {
+        Some(dic) => dic,
+        _ => return std::ptr::null(),
+    });
+    Box::into_raw(hyph)
+}
+
+// C-callable function to free a hyphenation dictionary loaded by load_hyphenation.
+#[no_mangle]
+pub extern "C" fn free_hyphenation(hyph_ptr: *mut HyphDic) {
+    unsafe { Box::from_raw(hyph_ptr) };
+}
+
+// C-callable function to find hyphenation values for a word.
+// Caller must supply the `hyphens` output buffer for results.
+// **NOTE** that the `hyphens` buffer must be at least `word_len + 2` elements long.
+// Returns true on success; false if word is not valid UTF-8 or output buffer too small.
+#[no_mangle]
+pub extern "C" fn find_hyphen_values(dic: &HyphDic, word: *const c_char, word_len: u32,
+                                     hyphens: *mut u8, hyphens_len: u32) -> bool {
+    if word_len + 2 > hyphens_len {
+        return false;
+    }
+    let word_str = match str::from_utf8(unsafe { slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
+        Ok(word) => word,
+        Err(_) => return false,
+    };
+    let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
+    dic.find_hyphen_values(word_str, hyphen_buf);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn basic_tests() {
+        let dic_path = "hyph_en_US.hyf";
+        let hyph = match super::load(dic_path) {
+            Some(dic) => dic,
+            _ => panic!("failed to load dictionary {}", dic_path),
         };
-        dic.levels.push(Level {
-            data: mmap.get(offset..limit).unwrap()
-        });
+        assert_eq!(hyph.hyphenate_word("haha", '-'), "haha");
+        assert_eq!(hyph.hyphenate_word("hahaha", '-'), "ha-haha");
+        assert_eq!(hyph.hyphenate_word("photo", '-'), "photo");
+        assert_eq!(hyph.hyphenate_word("photograph", '-'), "pho-to-graph");
+        assert_eq!(hyph.hyphenate_word("photographer", '-'), "pho-tog-ra-pher");
+        assert_eq!(hyph.hyphenate_word("photographic", '-'), "pho-to-graphic");
+        assert_eq!(hyph.hyphenate_word("photographical", '-'), "pho-to-graph-i-cal");
+        assert_eq!(hyph.hyphenate_word("photographically", '-'), "pho-to-graph-i-cally");
+        assert_eq!(hyph.hyphenate_word("supercalifragilisticexpialidocious", '-'), "su-per-cal-ifrag-ilis-tic-ex-pi-ali-do-cious");
     }
 
-//    for level in &dic.levels {
-//        level.get_state(0).unwrap().deep_show("", &level);
-//    }
-
-    dic
+    #[bench]
+    fn bench_words(b: &mut test::Bencher) {
+        b.iter(|| {
+            let dic_path = "hyph_en_US.hyf";
+            let hyph = match super::load(dic_path) {
+                Some(dic) => dic,
+                _ => panic!("failed to load dictionary {}", dic_path),
+            };
+            let words_file = match File::open("/usr/share/dict/words") {
+                Err(why) => panic!("couldn't open file: {}", why),
+                Ok(file) => file,
+            };
+            use std::fs::File;
+            use std::io::{BufRead,BufReader};
+            let reader = BufReader::new(words_file);
+            let mut values: Vec<u8> = vec![0; 1000];
+            for line in reader.lines() {
+                let line = line.unwrap(); // Ignore errors.
+                let _result = hyph.find_hyphen_values(&line, &mut values);
+                //println!("{}", result);
+            }
+        });
+    }
 }
