@@ -1,19 +1,22 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 #![allow(dead_code)]
-#![feature(test)]
 
 #[macro_use]
 extern crate arrayref;
-extern crate test;
+extern crate memmap;
 
-use std::fs::File;
 use std::slice;
 use std::str;
 
+use std::cmp::max;
 use std::ffi::CStr;
+use std::fs::File;
 use std::os::raw::c_char;
 
 use memmap::Mmap;
-use num::Integer;
 
 const INVALID_STRING_OFFSET: usize = 0xffff;
 const INVALID_STATE_OFFSET: usize = 0xffffff;
@@ -96,6 +99,17 @@ impl State<'_> {
     }
 }
 
+fn lig_length(trail_byte: u8) -> usize {
+    // This is only called on valid UTF-8 where we already know trail_byte
+    // must be >= 0x80.
+    // Ligature lengths:       ff   fi   fl   ffi  ffl  long-st  st
+    const LENGTHS: [u8; 7] = [ 2u8, 2u8, 2u8, 3u8, 3u8, 2u8,     2u8 ];
+    if trail_byte > 0x86 {
+        return 1;
+    }
+    LENGTHS[trail_byte as usize - 0x80] as usize
+}
+
 // A hyphenation Level has a header followed by State records and packed string
 // data. The total size of the slice depends on the number and size of the
 // States and Strings it contains.
@@ -122,16 +136,16 @@ impl Level<'_> {
         u16::from_le_bytes(*array_ref!(self.data, 10, 2))
     }
     fn lh_min(&self) -> usize {
-        self.data[12] as usize
+        max(1, self.data[12] as usize)
     }
     fn rh_min(&self) -> usize {
-        self.data[13] as usize
+        max(1, self.data[13] as usize)
     }
     fn clh_min(&self) -> usize {
-        self.data[14] as usize
+        max(1, self.data[14] as usize)
     }
     fn crh_min(&self) -> usize {
-        self.data[15] as usize
+        max(1, self.data[15] as usize)
     }
     // Strings are represented as offsets from the Level's string_data_base.
     // This returns a byte slice referencing the string at a given offset,
@@ -166,16 +180,18 @@ impl Level<'_> {
         })
     }
     fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
-        values.iter_mut().for_each(|x| *x = 0);
-        let prep_word = ".".to_string() + word + ".";
-        let word_bytes = prep_word.as_bytes();
-        if word.len() < self.lh_min() + self.rh_min() {
+        let lh_min = self.lh_min();
+        let rh_min = self.rh_min();
+        // Bail out immediately if the word is too short to hyphenate.
+        let char_count = word.chars().count();
+        if char_count < lh_min + rh_min {
             return;
         }
+        let prep_word = ".".to_string() + word + ".";
         let start_state = self.get_state(0);
         let mut state = start_state;
-        for i in 0..word_bytes.len() {
-            let b = word_bytes[i];
+        for i in 0 .. prep_word.len() {
+            let b = prep_word.as_bytes()[i];
             loop {
                 if state.is_none() {
                     state = start_state;
@@ -189,16 +205,72 @@ impl Level<'_> {
                             state.unwrap().repl_string_offset() == INVALID_STRING_OFFSET {
                         let match_str = self.string_at_offset(state.unwrap().match_string_offset());
                         let offset = i + 1 - match_str.len();
-                        assert!(offset + match_str.len() <= word_bytes.len());
+                        assert!(offset + match_str.len() <= prep_word.len());
                         for j in 0 .. match_str.len() {
-                            if match_str[j] - b'0' > values[offset + j] {
-                                values[offset + j] = match_str[j] - b'0';
+                            let index = offset + j;
+                            if index >= lh_min && index <= word.len() - rh_min {
+                                // lh_min and rh_min are guaranteed to be >= 1,
+                                // so this will not try to access outside values[].
+                                if match_str[j] - b'0' > values[index - 1] {
+                                    values[index - 1] = match_str[j] - b'0';
+                                }
                             }
                         }
                     }
                     break;
                 }
                 state = self.get_state(state.unwrap().fallback_state());
+            }
+        }
+        // If the word was not purely ASCII, the use of lh_min and rh_min above
+        // may not have correctly excluded enough positions in the UTF-8 string,
+        // so we need to fix things up here.
+        if char_count < word.len() {
+            let mut index = 0;
+            let mut count = 0;
+            let word_bytes = word.as_bytes();
+            // Handle lh_min
+            while count < lh_min - 1 {
+                let byte = word_bytes[index];
+                if byte < 0x80 {
+                    values[index] = 0;
+                    index += 1;
+                } else if byte == 0xEF && word_bytes[index + 1] == 0xAC {
+                    count += lig_length(word_bytes[index + 2]);
+                    values[index] = 0;
+                    values[index + 1] = 0;
+                    values[index + 2] = 0;
+                    index += 3;
+                    continue;
+                } else {
+                    values[index] = 0;
+                    index += 1;
+                    while index < word_bytes.len() && (word_bytes[index] & 0xC0) == 0x80  {
+                        values[index] = 0;
+                        index += 1;
+                    }
+                }
+                count += 1;
+            }
+            // Handle rh_min
+            count = 0;
+            index = word.len();
+            while count < rh_min {
+                index -= 1;
+                let byte = word_bytes[index];
+                values[index] = 0;
+                if byte < 0x80 {
+                    count += 1;
+                    continue;
+                }
+                if byte >= 0xC0 {
+                    continue;
+                }
+                if byte == 0xEF && word_bytes[index + 1] == 0xAC {
+                    count += lig_length(word_bytes[index + 2]);
+                    continue;
+                }
+                count += 1;
             }
         }
     }
@@ -224,19 +296,16 @@ impl HyphDic {
         }
     }
     pub fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
+        values.iter_mut().for_each(|x| *x = 0);
         self.level(1).find_hyphen_values(word, values);
     }
     pub fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
-        let level = self.level(1);
-        if word.len() < level.lh_min() + level.rh_min() {
-            return word.to_string();
-        }
-        let mut values: Vec<u8> = vec![0; word.len() + 2];
-        level.find_hyphen_values(word, &mut values);
+        let mut values: Vec<u8> = vec![0; word.len()];
+        self.level(1).find_hyphen_values(word, &mut values);
         let mut result = word.to_string();
-        for i in (level.lh_min() .. word.len() - level.rh_min() + 1).rev() {
-            if values[i].is_odd() {
-                result.insert(i, hyphchar);
+        for i in (0 .. word.len()).rev() {
+            if (values[i] & 1) == 1 {
+                result.insert(i + 1, hyphchar);
             }
         }
         result
@@ -280,12 +349,12 @@ pub extern "C" fn free_hyphenation(hyph_ptr: *mut HyphDic) {
 
 // C-callable function to find hyphenation values for a word.
 // Caller must supply the `hyphens` output buffer for results.
-// **NOTE** that the `hyphens` buffer must be at least `word_len + 2` elements long.
+// **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
 // Returns true on success; false if word is not valid UTF-8 or output buffer too small.
 #[no_mangle]
 pub extern "C" fn find_hyphen_values(dic: &HyphDic, word: *const c_char, word_len: u32,
                                      hyphens: *mut u8, hyphens_len: u32) -> bool {
-    if word_len + 2 > hyphens_len {
+    if word_len > hyphens_len {
         return false;
     }
     let word_str = match str::from_utf8(unsafe { slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
@@ -295,49 +364,4 @@ pub extern "C" fn find_hyphen_values(dic: &HyphDic, word: *const c_char, word_le
     let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
     dic.find_hyphen_values(word_str, hyphen_buf);
     true
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn basic_tests() {
-        let dic_path = "hyph_en_US.hyf";
-        let hyph = match super::load(dic_path) {
-            Some(dic) => dic,
-            _ => panic!("failed to load dictionary {}", dic_path),
-        };
-        assert_eq!(hyph.hyphenate_word("haha", '-'), "haha");
-        assert_eq!(hyph.hyphenate_word("hahaha", '-'), "ha-haha");
-        assert_eq!(hyph.hyphenate_word("photo", '-'), "photo");
-        assert_eq!(hyph.hyphenate_word("photograph", '-'), "pho-to-graph");
-        assert_eq!(hyph.hyphenate_word("photographer", '-'), "pho-tog-ra-pher");
-        assert_eq!(hyph.hyphenate_word("photographic", '-'), "pho-to-graphic");
-        assert_eq!(hyph.hyphenate_word("photographical", '-'), "pho-to-graph-i-cal");
-        assert_eq!(hyph.hyphenate_word("photographically", '-'), "pho-to-graph-i-cally");
-        assert_eq!(hyph.hyphenate_word("supercalifragilisticexpialidocious", '-'), "su-per-cal-ifrag-ilis-tic-ex-pi-ali-do-cious");
-    }
-
-    #[bench]
-    fn bench_words(b: &mut test::Bencher) {
-        b.iter(|| {
-            let dic_path = "hyph_en_US.hyf";
-            let hyph = match super::load(dic_path) {
-                Some(dic) => dic,
-                _ => panic!("failed to load dictionary {}", dic_path),
-            };
-            let words_file = match File::open("/usr/share/dict/words") {
-                Err(why) => panic!("couldn't open file: {}", why),
-                Ok(file) => file,
-            };
-            use std::fs::File;
-            use std::io::{BufRead,BufReader};
-            let reader = BufReader::new(words_file);
-            let mut values: Vec<u8> = vec![0; 1000];
-            for line in reader.lines() {
-                let line = line.unwrap(); // Ignore errors.
-                let _result = hyph.find_hyphen_values(&line, &mut values);
-                //println!("{}", result);
-            }
-        });
-    }
 }
