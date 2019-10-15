@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-#![allow(dead_code)]
-
 #[macro_use]
 extern crate arrayref;
 extern crate memmap;
@@ -57,9 +55,11 @@ impl State<'_> {
     fn repl_string_offset(&self) -> usize {
         u16::from_le_bytes(*array_ref!(self.data, 6, 2)) as usize
     }
+    #[allow(dead_code)]
     fn repl_index(&self) -> i8 {
         self.data[8] as i8
     }
+    #[allow(dead_code)]
     fn repl_cut(&self) -> i8 {
         self.data[9] as i8
     }
@@ -87,6 +87,7 @@ impl State<'_> {
         }
         None
     }
+    #[allow(dead_code)]
     fn deep_show(&self, prefix: &str, dic: &Level) {
         if self.match_string_offset() != INVALID_STRING_OFFSET {
             let match_string = dic.string_at_offset(self.match_string_offset());
@@ -132,6 +133,7 @@ impl Level<'_> {
     fn nohyphen_string_offset(&self) -> usize {
         u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
     }
+    #[allow(dead_code)]
     fn nohyphen_count(&self) -> u16 {
         u16::from_le_bytes(*array_ref!(self.data, 10, 2))
     }
@@ -147,6 +149,9 @@ impl Level<'_> {
     fn crh_min(&self) -> usize {
         max(1, self.data[15] as usize)
     }
+    fn word_boundary_mins(&self) -> (usize, usize, usize, usize) {
+        (self.lh_min(), self.rh_min(), self.clh_min(), self.crh_min())
+    }
     // Strings are represented as offsets from the Level's string_data_base.
     // This returns a byte slice referencing the string at a given offset,
     // or an empty slice if invalid.
@@ -158,7 +163,7 @@ impl Level<'_> {
         let len = self.data[string_base] as usize;
         self.data.get(string_base + 1 .. string_base + 1 + len).unwrap()
     }
-    // The nohyphen field is actuall a string that contains multiple NUL-
+    // The nohyphen field is actually a string that contains multiple NUL-
     // separated substrings; return them as a vector of individual strings.
     fn nohyphen(&self) -> Vec<&str> {
         str::from_utf8(self.string_at_offset(self.nohyphen_string_offset() as usize)).unwrap().split('\0').collect()
@@ -179,9 +184,7 @@ impl Level<'_> {
             data: &self.data[base+offset..base+offset+state_len],
         })
     }
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
-        let lh_min = self.lh_min();
-        let rh_min = self.rh_min();
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8], lh_min: usize, rh_min: usize) {
         // Bail out immediately if the word is too short to hyphenate.
         let char_count = word.chars().count();
         if char_count < lh_min + rh_min {
@@ -282,11 +285,13 @@ pub struct HyphDic {
 }
 
 impl HyphDic {
+    fn num_levels(&self) -> u32 {
+        u32::from_le_bytes(*array_ref!(self.mmap, 0, 4))
+    }
     fn level(&self, i: u32) -> Level {
         let file_size = self.mmap.len() as usize;
-        let num_levels = u32::from_le_bytes(*array_ref!(self.mmap, 0, 4));
         let offset = u32::from_le_bytes(*array_ref!(self.mmap, (4 + 4 * i) as usize, 4)) as usize;
-        let limit = if i == num_levels - 1 {
+        let limit = if i == self.num_levels() - 1 {
             file_size
         } else {
             u32::from_le_bytes(*array_ref!(self.mmap, (4 + 4 * i + 4) as usize, 4)) as usize
@@ -297,11 +302,53 @@ impl HyphDic {
     }
     pub fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
         values.iter_mut().for_each(|x| *x = 0);
-        self.level(1).find_hyphen_values(word, values);
+        let top_level = self.level(0);
+        let (lh_min, rh_min, clh_min, crh_min) = top_level.word_boundary_mins();
+        if word.len() < lh_min + rh_min {
+            return;
+        }
+        top_level.find_hyphen_values(word, values, lh_min, rh_min);
+        // Subsequent levels are applied to fragments between potential breaks
+        // already found:
+        for l in 1 .. self.num_levels() {
+            let mut begin = 0;
+            let mut lh = lh_min;
+            let level = self.level(l);
+            for i in lh - 1 .. word.len() - rh_min {
+                if (values[i] & 1) == 1 || (begin > 0 && i == word.len() - 1) {
+                    if i > begin {
+                        values[begin .. i].iter_mut().for_each(|x| *x = 0);
+                        level.find_hyphen_values(&word[begin .. i + 1],
+                                                 &mut values[begin .. i + 1],
+                                                 lh, crh_min);
+                    }
+                    begin = i + 1;
+                    lh = clh_min;
+                }
+            }
+            if begin == 0 {
+                level.find_hyphen_values(word, values, lh_min, rh_min);
+            } else if begin < word.len() {
+                level.find_hyphen_values(&word[begin .. word.len()],
+                                         &mut values[begin .. word.len()],
+                                         clh_min, rh_min);
+            }
+        }
+        for nh in top_level.nohyphen() {
+            if nh.len() == 0 {
+                continue;
+            }
+            for m in word.match_indices(nh) {
+                if m.0 > 0 {
+                    values[m.0 - 1] = 0;
+                }
+                values[m.0 + m.1.len() - 1] = 0;
+            }
+        }
     }
     pub fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
         let mut values: Vec<u8> = vec![0; word.len()];
-        self.level(1).find_hyphen_values(word, &mut values);
+        self.find_hyphen_values(word, &mut values);
         let mut result = word.to_string();
         for i in (0 .. word.len()).rev() {
             if (values[i] & 1) == 1 {
@@ -314,9 +361,9 @@ impl HyphDic {
 
 pub fn load(dic_path: &str) -> Option<HyphDic> {
     let file = match File::open(dic_path) {
-                Err(_) => return None,
-                Ok(file) => file,
-            };
+        Err(_) => return None,
+        Ok(file) => file,
+    };
     let dic = HyphDic {
         mmap: match unsafe { Mmap::map(&file)} {
             Err(_) => return None,
