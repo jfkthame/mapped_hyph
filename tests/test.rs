@@ -1,13 +1,16 @@
 #![feature(test)]
+
 extern crate test;
 extern crate mmhyph;
 
 #[cfg(test)]
 mod tests {
+    use mmhyph::Hyphenator;
+
     #[test]
     fn basic_tests() {
         let dic_path = "hyph_en_US.hyf";
-        let hyph = match mmhyph::load(dic_path) {
+        let hyph = match mmhyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -25,7 +28,7 @@ mod tests {
     #[test]
     fn base() {
         let dic_path = "tests/base.hyf";
-        let dic = match mmhyph::load(dic_path) {
+        let dic = match mmhyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -47,7 +50,7 @@ mod tests {
     #[test]
     fn compound() {
         let dic_path = "tests/compound.hyf";
-        let dic = match mmhyph::load(dic_path) {
+        let dic = match mmhyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -57,7 +60,7 @@ mod tests {
     #[test]
     fn compound4() {
         let dic_path = "tests/compound4.hyf";
-        let dic = match mmhyph::load(dic_path) {
+        let dic = match mmhyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -67,7 +70,7 @@ mod tests {
     #[test]
     fn compound5() {
         let dic_path = "tests/compound5.hyf";
-        let dic = match mmhyph::load(dic_path) {
+        let dic = match mmhyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -77,7 +80,7 @@ mod tests {
     #[test]
     fn compound6() {
         let dic_path = "tests/compound6.hyf";
-        let dic = match mmhyph::load(dic_path) {
+        let dic = match mmhyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };

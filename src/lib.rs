@@ -12,6 +12,7 @@ use std::str;
 use std::cmp::max;
 use std::ffi::CStr;
 use std::fs::File;
+use std::ops::Deref;
 use std::os::raw::c_char;
 
 use memmap::Mmap;
@@ -279,28 +280,47 @@ impl Level<'_> {
     }
 }
 
-#[derive(Debug)]
-pub struct HyphDic {
-    mmap: Mmap,
+trait HyphenatorImpl {
+    fn num_levels(&self) -> u32;
+    fn level(&self, i: u32) -> Level;
 }
 
-impl HyphDic {
+impl HyphenatorImpl for &[u8] {
     fn num_levels(&self) -> u32 {
-        u32::from_le_bytes(*array_ref!(self.mmap, 0, 4))
+        u32::from_le_bytes(*array_ref!(self, 0, 4))
     }
     fn level(&self, i: u32) -> Level {
-        let file_size = self.mmap.len() as usize;
-        let offset = u32::from_le_bytes(*array_ref!(self.mmap, (4 + 4 * i) as usize, 4)) as usize;
+        let file_size = self.len() as usize;
+        let offset = u32::from_le_bytes(*array_ref!(self, (4 + 4 * i) as usize, 4)) as usize;
         let limit = if i == self.num_levels() - 1 {
             file_size
         } else {
-            u32::from_le_bytes(*array_ref!(self.mmap, (4 + 4 * i + 4) as usize, 4)) as usize
+            u32::from_le_bytes(*array_ref!(self, (4 + 4 * i + 4) as usize, 4)) as usize
         };
         Level {
-            data: self.mmap.get(offset..limit).unwrap()
+            data: &self[offset .. limit]
         }
     }
-    pub fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
+}
+
+pub trait Hyphenator {
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8]);
+    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String;
+}
+
+impl Hyphenator for &[u8] {
+    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
+        let mut values: Vec<u8> = vec![0; word.len()];
+        self.find_hyphen_values(word, &mut values);
+        let mut result = word.to_string();
+        for i in (0 .. word.len()).rev() {
+            if (values[i] & 1) == 1 {
+                result.insert(i + 1, hyphchar);
+            }
+        }
+        result
+    }
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
         values.iter_mut().for_each(|x| *x = 0);
         let top_level = self.level(0);
         let (lh_min, rh_min, clh_min, crh_min) = top_level.word_boundary_mins();
@@ -346,29 +366,25 @@ impl HyphDic {
             }
         }
     }
-    pub fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
-        let mut values: Vec<u8> = vec![0; word.len()];
-        self.find_hyphen_values(word, &mut values);
-        let mut result = word.to_string();
-        for i in (0 .. word.len()).rev() {
-            if (values[i] & 1) == 1 {
-                result.insert(i + 1, hyphchar);
-            }
-        }
-        result
+}
+
+impl Hyphenator for Mmap {
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
+        self.deref().find_hyphen_values(word, values)
+    }
+    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
+        self.deref().hyphenate_word(word, hyphchar)
     }
 }
 
-pub fn load(dic_path: &str) -> Option<HyphDic> {
+pub fn load_file(dic_path: &str) -> Option<Mmap> {
     let file = match File::open(dic_path) {
         Err(_) => return None,
         Ok(file) => file,
     };
-    let dic = HyphDic {
-        mmap: match unsafe { Mmap::map(&file)} {
-            Err(_) => return None,
-            Ok(mmap) => mmap,
-        }
+    let dic = match unsafe { Mmap::map(&file) } {
+        Err(_) => return None,
+        Ok(mmap) => mmap,
     };
     Some(dic)
 }
@@ -376,12 +392,12 @@ pub fn load(dic_path: &str) -> Option<HyphDic> {
 // C-callable function to load a hyphenation dictionary; returns null on failure.
 // `path` must be a valid UTF-8 string, or it will panic!
 #[no_mangle]
-pub extern "C" fn load_hyphenation(path: *const c_char) -> *const HyphDic {
+pub extern "C" fn load_hyphenation(path: *const c_char) -> *const Mmap {
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(str) => str,
         Err(_) => return std::ptr::null(),
     };
-    let hyph = Box::new(match load(path_str) {
+    let hyph = Box::new(match load_file(path_str) {
         Some(dic) => dic,
         _ => return std::ptr::null(),
     });
@@ -390,7 +406,7 @@ pub extern "C" fn load_hyphenation(path: *const c_char) -> *const HyphDic {
 
 // C-callable function to free a hyphenation dictionary loaded by load_hyphenation.
 #[no_mangle]
-pub extern "C" fn free_hyphenation(hyph_ptr: *mut HyphDic) {
+pub extern "C" fn free_hyphenation(hyph_ptr: *mut Mmap) {
     unsafe { Box::from_raw(hyph_ptr) };
 }
 
@@ -399,7 +415,7 @@ pub extern "C" fn free_hyphenation(hyph_ptr: *mut HyphDic) {
 // **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
 // Returns true on success; false if word is not valid UTF-8 or output buffer too small.
 #[no_mangle]
-pub extern "C" fn find_hyphen_values(dic: &HyphDic, word: *const c_char, word_len: u32,
+pub extern "C" fn find_hyphen_values(dic: &Mmap, word: *const c_char, word_len: u32,
                                      hyphens: *mut u8, hyphens_len: u32) -> bool {
     if word_len > hyphens_len {
         return false;
