@@ -86,4 +86,24 @@ mod tests {
         };
         assert_eq!(dic.hyphenate_word("meaque", '-'), "me-a-que");
     }
+
+    #[test]
+    fn settings2() {
+        let dic_path = "tests/settings2.hyf";
+        let dic = match mmhyph::load_file(dic_path) {
+            Some(dic) => dic,
+            _ => panic!("failed to load dictionary {}", dic_path),
+        };
+        assert_eq!(dic.hyphenate_word("őőőőőőő", '='), "ő=ő=ő=ő=ő=ő=ő");
+    }
+
+    #[test]
+    fn settings3() {
+        let dic_path = "tests/settings3.hyf";
+        let dic = match mmhyph::load_file(dic_path) {
+            Some(dic) => dic,
+            _ => panic!("failed to load dictionary {}", dic_path),
+        };
+        assert_eq!(dic.hyphenate_word("őőőőőőő", '='), "őő=ő=ő=ő=őő");
+    }
 }
