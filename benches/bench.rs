@@ -5,6 +5,7 @@ extern crate test;
 extern crate lazy_static;
 
 extern crate mmhyph;
+use mmhyph::Hyphenator;
 
 lazy_static! {
     static ref WORDS: Vec<String> = {
@@ -19,7 +20,7 @@ lazy_static! {
 fn bench_words(b: &mut test::Bencher) {
     b.iter(|| {
         let dic_path = "hyph_en_US.hyf";
-        let hyph = match mmhyph::load(dic_path) {
+        let hyph = match mmhyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };

@@ -166,8 +166,8 @@ impl Level<'_> {
     }
     // The nohyphen field is actually a string that contains multiple NUL-
     // separated substrings; return them as a vector of individual strings.
-    fn nohyphen(&self) -> Vec<&str> {
-        str::from_utf8(self.string_at_offset(self.nohyphen_string_offset() as usize)).unwrap().split('\0').collect()
+    fn nohyphen(&self) -> Vec<&[u8]> {
+        self.string_at_offset(self.nohyphen_string_offset() as usize).split(|&b| b == 0).collect()
     }
     // States are represented as an offset from the Level's state_data_base.
     // This returns the State at a given offset, or None if invalid.
@@ -354,15 +354,21 @@ impl Hyphenator for &[u8] {
                                          clh_min, rh_min);
             }
         }
-        for nh in top_level.nohyphen() {
-            if nh.len() == 0 {
-                continue;
-            }
-            for m in word.match_indices(nh) {
-                if m.0 > 0 {
-                    values[m.0 - 1] = 0;
+        if top_level.nohyphen_count() > 0 {
+            let nohyph = top_level.nohyphen();
+            for i in lh_min .. word.len() - rh_min + 1 {
+                if (values[i - 1] & 1) == 1 {
+                    for nh in &nohyph {
+                        if i + nh.len() <= word.len() && *nh == &word.as_bytes()[i .. i + nh.len()] {
+                            values[i - 1] = 0;
+                            break;
+                        }
+                        if nh.len() <= i && *nh == &word.as_bytes()[i - nh.len() .. i] {
+                            values[i - 1] = 0;
+                            break;
+                        }
+                    }
                 }
-                values[m.0 + m.1.len() - 1] = 0;
             }
         }
     }
