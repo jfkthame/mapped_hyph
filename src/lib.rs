@@ -38,8 +38,12 @@ impl Transition {
 }
 
 // State is a reference to a slice of mmap'd data that begins with a fixed
-// header, followed by an array of transitions. Size of the data slice depends
-// on the number of transitions in the state.
+// header, followed by an array of transitions. Total size of the data slice
+// depends on the number of transitions in the state.
+// There are two versions of State, a basic record that supports only simple
+// hyphenation (no associated spelling change), and an extended version that
+// adds the replacement-string fields to support spelling changes at the
+// hyphenation point. Check is_extended() to know which version is present.
 #[derive(Debug,Copy,Clone)]
 struct State<'a> {
     data: &'a [u8],
@@ -53,19 +57,21 @@ impl State<'_> {
     fn match_string_offset(&self) -> usize {
         u16::from_le_bytes(*array_ref!(self.data, 4, 2)) as usize
     }
-    fn repl_string_offset(&self) -> usize {
-        u16::from_le_bytes(*array_ref!(self.data, 6, 2)) as usize
-    }
-    #[allow(dead_code)]
-    fn repl_index(&self) -> i8 {
-        self.data[8] as i8
-    }
-    #[allow(dead_code)]
-    fn repl_cut(&self) -> i8 {
-        self.data[9] as i8
-    }
     fn num_transitions(&self) -> u8 {
-        self.data[10]
+        self.data[6]
+    }
+    fn is_extended(&self) -> bool {
+        self.data[7] != 0
+    }
+    // Accessors that are only valid if is_extended() is true.
+    fn repl_string_offset(&self) -> usize {
+        u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
+    }
+    fn repl_index(&self) -> i8 {
+        self.data[10] as i8
+    }
+    fn repl_cut(&self) -> i8 {
+        self.data[11] as i8
     }
     // Return the state's Transitions as a slice reference.
     fn transitions(&self) -> &[Transition] {
@@ -73,8 +79,9 @@ impl State<'_> {
         if count == 0 {
             return &[];
         }
-        assert!(self.data.len() == 12 + count * 4);
-        let trans_ptr = &self.data[12] as *const u8 as *const Transition;
+        let transition_offset = if self.is_extended() { 12 } else { 8 };
+        assert!(self.data.len() == transition_offset + count * 4);
+        let trans_ptr = &self.data[transition_offset] as *const u8 as *const Transition;
         unsafe { slice::from_raw_parts(trans_ptr, count) }
     }
     // Look up the Transition for a given input byte, or None.
@@ -122,11 +129,8 @@ struct Level<'a> {
 
 impl Level<'_> {
     // Accessors for Level header fields.
-    fn num_states(&self) -> u32 {
-        u32::from_le_bytes(*array_ref!(self.data, 0, 4))
-    }
     fn state_data_base(&self) -> usize {
-        16 + 4 * self.num_states() as usize
+        u32::from_le_bytes(*array_ref!(self.data, 0, 4)) as usize
     }
     fn string_data_base(&self) -> usize {
         u32::from_le_bytes(*array_ref!(self.data, 4, 4)) as usize
@@ -134,7 +138,6 @@ impl Level<'_> {
     fn nohyphen_string_offset(&self) -> usize {
         u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
     }
-    #[allow(dead_code)]
     fn nohyphen_count(&self) -> u16 {
         u16::from_le_bytes(*array_ref!(self.data, 10, 2))
     }
@@ -157,17 +160,20 @@ impl Level<'_> {
     // This returns a byte slice referencing the string at a given offset,
     // or an empty slice if invalid.
     fn string_at_offset(&self, offset: usize) -> &'_ [u8] {
-        if offset == INVALID_STRING_OFFSET {
-            return &[];
-        }
+        assert!(offset != INVALID_STRING_OFFSET);
         let string_base = self.string_data_base() as usize + offset;
         let len = self.data[string_base] as usize;
         self.data.get(string_base + 1 .. string_base + 1 + len).unwrap()
     }
     // The nohyphen field is actually a string that contains multiple NUL-
     // separated substrings; return them as a vector of individual strings.
-    fn nohyphen(&self) -> Vec<&[u8]> {
-        self.string_at_offset(self.nohyphen_string_offset() as usize).split(|&b| b == 0).collect()
+    fn nohyphen(&self) -> Option<Vec<&[u8]>> {
+        let string_offset = self.nohyphen_string_offset();
+        if string_offset == INVALID_STRING_OFFSET {
+            None
+        } else {
+            Some(self.string_at_offset(string_offset as usize).split(|&b| b == 0).collect())
+        }
     }
     // States are represented as an offset from the Level's state_data_base.
     // This returns the State at a given offset, or None if invalid.
@@ -175,15 +181,13 @@ impl Level<'_> {
         if offset == INVALID_STATE_OFFSET {
             return None;
         }
-        assert!(offset < self.string_data_base());
+        assert!(offset < self.string_data_base() - self.state_data_base());
         let base = self.state_data_base();
         let state_header = State {
-            data: &self.data[base+offset..base+offset+12],
+            data: &self.data[base + offset .. base + offset + 8],
         };
-        let state_len = (12 + 4 * state_header.num_transitions()) as usize;
-        Some(State {
-            data: &self.data[base+offset..base+offset+state_len],
-        })
+        let length = if state_header.is_extended() { 12 } else { 8 } + 4 * state_header.num_transitions() as usize;
+        Some(State{ data: &self.data[base + offset .. base + offset + length] })
     }
     fn find_hyphen_values(&self, word: &str, values: &mut [u8], lh_min: usize, rh_min: usize) {
         // Bail out immediately if the word is too short to hyphenate.
@@ -193,37 +197,44 @@ impl Level<'_> {
         }
         let prep_word = ".".to_string() + word + ".";
         let start_state = self.get_state(0);
-        let mut state = start_state;
+        let mut st = start_state;
         for i in 0 .. prep_word.len() {
             let b = prep_word.as_bytes()[i];
             loop {
-                if state.is_none() {
-                    state = start_state;
+                if st.is_none() {
+                    st = start_state;
                     break;
                 }
-                let t = state.unwrap().transition_for(b);
-                if t.is_some() {
-                    state = self.get_state(t.unwrap().new_state_offset());
-                    if state.is_some() &&
-                            state.unwrap().match_string_offset() != INVALID_STRING_OFFSET &&
-                            state.unwrap().repl_string_offset() == INVALID_STRING_OFFSET {
-                        let match_str = self.string_at_offset(state.unwrap().match_string_offset());
-                        let offset = i + 1 - match_str.len();
-                        assert!(offset + match_str.len() <= prep_word.len());
-                        for j in 0 .. match_str.len() {
-                            let index = offset + j;
-                            if index >= lh_min && index <= word.len() - rh_min {
-                                // lh_min and rh_min are guaranteed to be >= 1,
-                                // so this will not try to access outside values[].
-                                if match_str[j] - b'0' > values[index - 1] {
-                                    values[index - 1] = match_str[j] - b'0';
+                let state = st.unwrap();
+                let tr = state.transition_for(b);
+                if tr.is_some() {
+                    st = self.get_state(tr.unwrap().new_state_offset());
+                    if st.is_some() {
+                        let state = st.unwrap();
+                        let match_offset = state.match_string_offset();
+                        if match_offset != INVALID_STRING_OFFSET {
+                            if state.is_extended() {
+                                panic!("not yet implemented");
+                            } else {
+                                let match_str = self.string_at_offset(match_offset);
+                                let offset = i + 1 - match_str.len();
+                                assert!(offset + match_str.len() <= prep_word.len());
+                                for j in 0 .. match_str.len() {
+                                    let index = offset + j;
+                                    if index >= lh_min && index <= word.len() - rh_min {
+                                        // lh_min and rh_min are guaranteed to be >= 1,
+                                        // so this will not try to access outside values[].
+                                        if match_str[j] - b'0' > values[index - 1] {
+                                            values[index - 1] = match_str[j] - b'0';
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                     break;
                 }
-                state = self.get_state(state.unwrap().fallback_state());
+                st = self.get_state(state.fallback_state());
             }
         }
         // If the word was not purely ASCII, the use of lh_min and rh_min above
@@ -354,11 +365,11 @@ impl Hyphenator for &[u8] {
                                          clh_min, rh_min);
             }
         }
-        if top_level.nohyphen_count() > 0 {
-            let nohyph = top_level.nohyphen();
+        let nohyph = &top_level.nohyphen();
+        if nohyph.is_some() {
             for i in lh_min .. word.len() - rh_min + 1 {
                 if (values[i - 1] & 1) == 1 {
-                    for nh in &nohyph {
+                    for nh in nohyph.as_ref().unwrap() {
                         if i + nh.len() <= word.len() && *nh == &word.as_bytes()[i .. i + nh.len()] {
                             values[i - 1] = 0;
                             break;
