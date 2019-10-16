@@ -35,4 +35,10 @@ fn main() {
 
     println!("{}", dic2.hyphenate_word("motorcycle", '='));
 
+    let dic3 = match mmhyph::load_file("tests/rhmin.hyf") {
+        Some(dic) => dic,
+        _ => panic!("failed to load dictionary {}", dic_path),
+    };
+    println!("{}", dic3.hyphenate_word("övéit", '='));
+    println!("{}", dic3.hyphenate_word("అంగడిధర", '='));
 }

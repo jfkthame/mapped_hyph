@@ -106,4 +106,35 @@ mod tests {
         };
         assert_eq!(dic.hyphenate_word("őőőőőőő", '='), "őő=ő=ő=ő=őő");
     }
+
+    #[test]
+    fn hyphen() {
+        let dic_path = "tests/hyphen.hyf";
+        let dic = match mmhyph::load_file(dic_path) {
+            Some(dic) => dic,
+            _ => panic!("failed to load dictionary {}", dic_path),
+        };
+        assert_eq!(dic.hyphenate_word("foobar'foobar-foobar’foobar", '='), "foobar'foobar-foobar’foobar");
+    }
+
+    #[test]
+    fn lhmin() {
+        let dic_path = "tests/lhmin.hyf";
+        let dic = match mmhyph::load_file(dic_path) {
+            Some(dic) => dic,
+            _ => panic!("failed to load dictionary {}", dic_path),
+        };
+        assert_eq!(dic.hyphenate_word("miért", '='), "mi=ért");
+    }
+
+    #[test]
+    fn rhmin() {
+        let dic_path = "tests/rhmin.hyf";
+        let dic = match mmhyph::load_file(dic_path) {
+            Some(dic) => dic,
+            _ => panic!("failed to load dictionary {}", dic_path),
+        };
+        assert_eq!(dic.hyphenate_word("övéit", '='), "övéit");
+        assert_eq!(dic.hyphenate_word("అంగడిధర", '='), "అం=గ=డిధర");
+    }
 }

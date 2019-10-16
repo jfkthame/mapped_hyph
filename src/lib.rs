@@ -119,6 +119,10 @@ fn lig_length(trail_byte: u8) -> usize {
     LENGTHS[trail_byte as usize - 0x80] as usize
 }
 
+fn is_utf8_trail_byte(byte: u8) -> bool {
+    (byte & 0xC0) == 0x80
+}
+
 // A hyphenation Level has a header followed by State records and packed string
 // data. The total size of the slice depends on the number and size of the
 // States and Strings it contains.
@@ -138,6 +142,7 @@ impl Level<'_> {
     fn nohyphen_string_offset(&self) -> usize {
         u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
     }
+    #[allow(dead_code)]
     fn nohyphen_count(&self) -> u16 {
         u16::from_le_bytes(*array_ref!(self.data, 10, 2))
     }
@@ -260,7 +265,7 @@ impl Level<'_> {
                 } else {
                     values[index] = 0;
                     index += 1;
-                    while index < word_bytes.len() && (word_bytes[index] & 0xC0) == 0x80  {
+                    while index < word_bytes.len() && is_utf8_trail_byte(word_bytes[index])  {
                         values[index] = 0;
                         index += 1;
                     }
@@ -278,7 +283,7 @@ impl Level<'_> {
                     count += 1;
                     continue;
                 }
-                if byte >= 0xC0 {
+                if is_utf8_trail_byte(byte) {
                     continue;
                 }
                 if byte == 0xEF && word_bytes[index + 1] == 0xAC {
