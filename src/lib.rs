@@ -86,8 +86,9 @@ impl State<'_> {
     }
     // Look up the Transition for a given input byte, or None.
     fn transition_for(&self, b: u8) -> Option<Transition> {
-        // TODO: investigate whether binary search is worthwhile here. (The
-        // transitions array is sorted by match_byte() value.)
+        // The transitions array is sorted by match_byte() value, but there are
+        // usually very few entries; benchmarking showed that using binary_search_by
+        // here gave no benefit (possibly slightly slower).
         for t in self.transitions() {
             if t.match_byte() == b {
                 return Some(*t);
