@@ -16,18 +16,18 @@ typedef struct HyphDic HyphDic;
 extern "C" {
 #endif // __cplusplus
 
-bool find_hyphen_values_file(const HyphDic *dic,
-                             const char *word,
-                             uint32_t word_len,
-                             uint8_t *hyphens,
-                             uint32_t hyphens_len);
+int32_t find_hyphen_values_file(const HyphDic *dic,
+                                const char *word,
+                                uint32_t word_len,
+                                uint8_t *hyphens,
+                                uint32_t hyphens_len);
 
-bool find_hyphen_values_raw(const uint8_t *dic_buf,
-                            uint32_t dic_len,
-                            const char *word,
-                            uint32_t word_len,
-                            uint8_t *hyphens,
-                            uint32_t hyphens_len);
+int32_t find_hyphen_values_raw(const uint8_t *dic_buf,
+                               uint32_t dic_len,
+                               const char *word,
+                               uint32_t word_len,
+                               uint8_t *hyphens,
+                               uint32_t hyphens_len);
 
 void free_hyphenation_file(HyphDic *dic);
 

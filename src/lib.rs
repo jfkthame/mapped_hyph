@@ -64,12 +64,15 @@ impl State<'_> {
         self.data[7] != 0
     }
     // Accessors that are only valid if is_extended() is true.
+    #[allow(dead_code)]
     fn repl_string_offset(&self) -> usize {
         u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
     }
+    #[allow(dead_code)]
     fn repl_index(&self) -> i8 {
         self.data[10] as i8
     }
+    #[allow(dead_code)]
     fn repl_cut(&self) -> i8 {
         self.data[11] as i8
     }
@@ -128,6 +131,10 @@ fn is_ascii_digit(byte: u8) -> bool {
     byte <= 0x39 && byte >= 0x30
 }
 
+fn is_odd(byte: u8) -> bool {
+    (byte & 0x01) == 0x01
+}
+
 // A hyphenation Level has a header followed by State records and packed string
 // data. The total size of the slice depends on the number and size of the
 // States and Strings it contains.
@@ -158,16 +165,10 @@ impl Level<'_> {
         max(1, self.data[13] as usize)
     }
     fn clh_min(&self) -> usize {
-        if self.data[14] == 0 {
-            return self.lh_min();
-        }
-        self.data[14] as usize
+        max(1, self.data[14] as usize)
     }
     fn crh_min(&self) -> usize {
-        if self.data[15] == 0 {
-            return self.rh_min();
-        }
-        self.data[15] as usize
+        max(1, self.data[15] as usize)
     }
     fn word_boundary_mins(&self) -> (usize, usize, usize, usize) {
         (self.lh_min(), self.rh_min(), self.clh_min(), self.crh_min())
@@ -181,8 +182,8 @@ impl Level<'_> {
         let len = self.data[string_base] as usize;
         self.data.get(string_base + 1 .. string_base + 1 + len).unwrap()
     }
-    // The nohyphen field is actually a string that contains multiple NUL-
-    // separated substrings; return them as a vector of individual strings.
+    // The nohyphen field actually contains multiple NUL-separated substrings;
+    // return them as a vector of individual byte slices.
     fn nohyphen(&self) -> Option<Vec<&[u8]>> {
         let string_offset = self.nohyphen_string_offset();
         if string_offset == INVALID_STRING_OFFSET {
@@ -205,17 +206,19 @@ impl Level<'_> {
         let length = if state_header.is_extended() { 12 } else { 8 } + 4 * state_header.num_transitions() as usize;
         Some(State{ data: &self.data[base + offset .. base + offset + length] })
     }
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8], lh_min: usize, rh_min: usize) {
+    // Sets hyphenation values (odd = potential break, even = no break) in values[],
+    // and returns the change in the number of odd values present, so the caller can
+    // keep track of the total number of potential breaks in the word.
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8], lh_min: usize, rh_min: usize) -> isize {
         // Bail out immediately if the word is too short to hyphenate.
-        let char_count = word.chars().count();
-        if char_count < lh_min + rh_min {
-            return;
+        if word.len() < lh_min + rh_min {
+            return 0;
         }
-        let prep_word = ".".to_string() + word + ".";
         let start_state = self.get_state(0);
         let mut st = start_state;
-        for i in 0 .. prep_word.len() {
-            let b = prep_word.as_bytes()[i];
+        let mut hyph_count = 0;
+        for i in 0 .. word.len() + 2 {
+            let b = if i == 0 || i == word.len() + 1 { b'.' } else { word.as_bytes()[i - 1] };
             loop {
                 if st.is_none() {
                     st = start_state;
@@ -234,14 +237,20 @@ impl Level<'_> {
                             } else {
                                 let match_str = self.string_at_offset(match_offset);
                                 let offset = i + 1 - match_str.len();
-                                assert!(offset + match_str.len() <= prep_word.len());
+                                assert!(offset + match_str.len() <= word.len() + 2);
                                 for j in 0 .. match_str.len() {
                                     let index = offset + j;
                                     if index >= lh_min && index <= word.len() - rh_min {
                                         // lh_min and rh_min are guaranteed to be >= 1,
                                         // so this will not try to access outside values[].
-                                        if match_str[j] - b'0' > values[index - 1] {
-                                            values[index - 1] = match_str[j] - b'0';
+                                        let old_value = values[index - 1];
+                                        let value = match_str[j] - b'0';
+                                        if value > old_value {
+                                            if is_odd(old_value) != is_odd(value) {
+                                                // Adjust hyph_count for the change we're making
+                                                hyph_count += if is_odd(value) { 1 } else { -1 };
+                                            }
+                                            values[index - 1] = value;
                                         }
                                     }
                                 }
@@ -255,7 +264,7 @@ impl Level<'_> {
         }
 
         // If the word was not purely ASCII, or if the word begins/ends with
-        // digits the use of lh_min and rh_min above may not have correctly
+        // digits, the use of lh_min and rh_min above may not have correctly
         // excluded enough positions, so we need to fix things up here.
         let mut index = 0;
         let mut count = 0;
@@ -263,6 +272,9 @@ impl Level<'_> {
         // Handle lh_min
         while count < lh_min - 1 && index < word_bytes.len() {
             let byte = word_bytes[index];
+            if is_odd(values[index]) {
+                hyph_count -= 1;
+            }
             values[index] = 0;
             if byte < 0x80 {
                 index += 1;
@@ -271,13 +283,22 @@ impl Level<'_> {
                 }
             } else if byte == 0xEF && index + 2 < word_bytes.len() && word_bytes[index + 1] == 0xAC {
                 count += lig_length(word_bytes[index + 2]);
+                if is_odd(values[index + 1]) {
+                    hyph_count -= 1;
+                }
                 values[index + 1] = 0;
+                if is_odd(values[index + 2]) {
+                    hyph_count -= 1;
+                }
                 values[index + 2] = 0;
                 index += 3;
                 continue;
             } else {
                 index += 1;
                 while index < word_bytes.len() && is_utf8_trail_byte(word_bytes[index])  {
+                    if is_odd(values[index]) {
+                        hyph_count -= 1;
+                    }
                     values[index] = 0;
                     index += 1;
                 }
@@ -292,6 +313,9 @@ impl Level<'_> {
             index -= 1;
             let byte = word_bytes[index];
             if index < word.len() - 1 {
+                if is_odd(values[index]) {
+                    hyph_count -= 1;
+                }
                 values[index] = 0;
             }
             if byte < 0x80 {
@@ -310,6 +334,8 @@ impl Level<'_> {
             }
             count += 1;
         }
+
+        hyph_count
     }
 }
 
@@ -337,78 +363,99 @@ impl HyphenatorImpl for &[u8] {
 }
 
 pub trait Hyphenator {
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8]);
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize;
     fn hyphenate_word(&self, word: &str, hyphchar: char) -> String;
 }
 
 impl Hyphenator for &[u8] {
     fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
         let mut values: Vec<u8> = vec![0; word.len()];
-        self.find_hyphen_values(word, &mut values);
+        let hyph_count = self.find_hyphen_values(word, &mut values);
         let mut result = word.to_string();
+        let mut n = 0;
         for i in (0 .. word.len()).rev() {
-            if (values[i] & 1) == 1 {
+            if is_odd(values[i]) {
                 result.insert(i + 1, hyphchar);
+                n += 1;
             }
         }
+        assert!(n == hyph_count);
         result
     }
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize {
         values.iter_mut().for_each(|x| *x = 0);
         let top_level = self.level(0);
         let (lh_min, rh_min, clh_min, crh_min) = top_level.word_boundary_mins();
         if word.len() < lh_min + rh_min {
-            return;
+            return 0;
         }
-        top_level.find_hyphen_values(word, values, lh_min, rh_min);
+        let mut hyph_count = top_level.find_hyphen_values(word, values, lh_min, rh_min);
+        let compound = hyph_count > 0;
         // Subsequent levels are applied to fragments between potential breaks
         // already found:
         for l in 1 .. self.num_levels() {
-            let mut begin = 0;
-            let mut lh = lh_min;
             let level = self.level(l);
-            for i in lh - 1 .. word.len() - rh_min {
-                if (values[i] & 1) == 1 || (begin > 0 && i == word.len() - 1) {
-                    if i > begin {
-                        values[begin .. i].iter_mut().for_each(|x| *x = 0);
-                        level.find_hyphen_values(&word[begin .. i + 1],
-                                                 &mut values[begin .. i + 1],
-                                                 lh, crh_min);
-                    }
-                    begin = i + 1;
-                    lh = clh_min;
-                }
-            }
-            if begin == 0 {
-                level.find_hyphen_values(word, values, lh_min, rh_min);
-            } else if begin < word.len() {
-                level.find_hyphen_values(&word[begin .. word.len()],
-                                         &mut values[begin .. word.len()],
-                                         clh_min, rh_min);
-            }
-        }
-        let nohyph = &top_level.nohyphen();
-        if nohyph.is_some() {
-            for i in lh_min .. word.len() - rh_min + 1 {
-                if (values[i - 1] & 1) == 1 {
-                    for nh in nohyph.as_ref().unwrap() {
-                        if i + nh.len() <= word.len() && *nh == &word.as_bytes()[i .. i + nh.len()] {
-                            values[i - 1] = 0;
-                            break;
+            if hyph_count > 0 {
+                let mut begin = 0;
+                let mut lh = lh_min;
+                for i in lh_min - 1 .. word.len() - rh_min {
+                    if is_odd(values[i]) || (begin > 0 && i == word.len() - 1) {
+                        if i > begin {
+                            values[begin .. i].iter_mut().for_each(|x| {
+                                if is_odd(*x) {
+                                    hyph_count -= 1;
+                                }
+                                *x = 0;
+                            });
+                            hyph_count += level.find_hyphen_values(&word[begin .. i + 1],
+                                                                   &mut values[begin .. i + 1],
+                                                                   lh, crh_min);
                         }
-                        if nh.len() <= i && *nh == &word.as_bytes()[i - nh.len() .. i] {
-                            values[i - 1] = 0;
-                            break;
-                        }
+                        begin = i + 1;
+                        lh = clh_min;
                     }
                 }
+                if begin == 0 {
+                    hyph_count += level.find_hyphen_values(word, values, lh_min, rh_min);
+                } else if begin < word.len() {
+                    hyph_count += level.find_hyphen_values(&word[begin .. word.len()],
+                                                           &mut values[begin .. word.len()],
+                                                           clh_min, rh_min);
+                }
+            } else {
+                hyph_count += level.find_hyphen_values(word, values, lh_min, rh_min);
             }
         }
+
+        // Only need to check nohyphen strings if top-level (compound) breaks were found.
+        if compound && hyph_count > 0 {
+            let nohyph = &top_level.nohyphen();
+            if nohyph.is_some() {
+                for i in lh_min .. word.len() - rh_min + 1 {
+                    if is_odd(values[i - 1]) {
+                        for nh in nohyph.as_ref().unwrap() {
+                            if i + nh.len() <= word.len() && *nh == &word.as_bytes()[i .. i + nh.len()] {
+                                values[i - 1] = 0;
+                                hyph_count -= 1;
+                                break;
+                            }
+                            if nh.len() <= i && *nh == &word.as_bytes()[i - nh.len() .. i] {
+                                values[i - 1] = 0;
+                                hyph_count -= 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        hyph_count
     }
 }
 
 impl Hyphenator for Mmap {
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) {
+    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize {
         self.deref().find_hyphen_values(word, values)
     }
     fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
@@ -460,42 +507,42 @@ pub extern "C" fn free_hyphenation_file(dic: *mut HyphDic) {
 // using a dictionary loaded by load_hyphenation_file().
 // Caller must supply the `hyphens` output buffer for results.
 // **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
-// Returns true on success; false if word is not valid UTF-8 or output buffer too small.
+// Returns -1 if word is not valid UTF-8 or output buffer too small;
+// otherwise returns the number of hyphenation positions found.
 // This function may panic!() if the dictionary is not valid.
 #[no_mangle]
 pub extern "C" fn find_hyphen_values_file(dic: *const HyphDic, word: *const c_char, word_len: u32,
-                                          hyphens: *mut u8, hyphens_len: u32) -> bool {
+                                          hyphens: *mut u8, hyphens_len: u32) -> i32 {
     if word_len > hyphens_len {
-        return false;
+        return -1;
     }
     let word_str = match str::from_utf8(unsafe { slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
         Ok(word) => word,
-        Err(_) => return false,
+        Err(_) => return -1,
     };
     let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
-    (unsafe { &*(dic as *const Mmap) } ).find_hyphen_values(word_str, hyphen_buf);
-    true
+    (unsafe { &*(dic as *const Mmap) } ).find_hyphen_values(word_str, hyphen_buf) as i32
 }
 
 // C-callable function to find hyphenation values for a word,
 // using a dictionary supplied as a raw memory buffer by the caller.
 // Caller must supply the `hyphens` output buffer for results.
 // **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
-// Returns true on success; false if word is not valid UTF-8 or output buffer too small.
+// Returns -1 if word is not valid UTF-8 or output buffer too small;
+// otherwise returns the number of hyphenation positions found.
 // This function may panic!() if the dictionary is not valid.
 #[no_mangle]
 pub extern "C" fn find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
                                          word: *const c_char, word_len: u32,
-                                         hyphens: *mut u8, hyphens_len: u32) -> bool {
+                                         hyphens: *mut u8, hyphens_len: u32) -> i32 {
     if word_len > hyphens_len {
-        return false;
+        return -1;
     }
     let word_str = match str::from_utf8(unsafe { slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
         Ok(word) => word,
-        Err(_) => return false,
+        Err(_) => return -1,
     };
     let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
     let dic = unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) };
-    dic.find_hyphen_values(word_str, hyphen_buf);
-    true
+    dic.find_hyphen_values(word_str, hyphen_buf) as i32
 }
