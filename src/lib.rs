@@ -428,10 +428,17 @@ pub fn load_file(dic_path: &str) -> Option<Mmap> {
     Some(dic)
 }
 
-// C-callable function to load a hyphenation dictionary; returns null on failure.
+// Opaque type for use in the FFI function signatures;
+// it's really just an memmap::Mmap.
+pub struct HyphDic;
+
+// C-callable function to load a hyphenation dictionary from a file;
+// returns null on failure.
 // `path` must be a valid UTF-8 string, or it will panic!
+// This does not validate that the file actually contains usable hyphenation data,
+// it only opens the file (read-only) and mmap's it into memory.
 #[no_mangle]
-pub extern "C" fn load_hyphenation(path: *const c_char) -> *const Mmap {
+pub extern "C" fn load_hyphenation_file(path: *const c_char) -> *const HyphDic {
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(str) => str,
         Err(_) => return std::ptr::null(),
@@ -440,22 +447,24 @@ pub extern "C" fn load_hyphenation(path: *const c_char) -> *const Mmap {
         Some(dic) => dic,
         _ => return std::ptr::null(),
     });
-    Box::into_raw(hyph)
+    Box::into_raw(hyph) as *const HyphDic
 }
 
-// C-callable function to free a hyphenation dictionary loaded by load_hyphenation.
+// C-callable function to free a hyphenation dictionary loaded by load_hyphenation_file.
 #[no_mangle]
-pub extern "C" fn free_hyphenation(hyph_ptr: *mut Mmap) {
-    unsafe { Box::from_raw(hyph_ptr) };
+pub extern "C" fn free_hyphenation_file(dic: *mut HyphDic) {
+    unsafe { Box::from_raw(dic) };
 }
 
-// C-callable function to find hyphenation values for a word.
+// C-callable function to find hyphenation values for a word,
+// using a dictionary loaded by load_hyphenation_file().
 // Caller must supply the `hyphens` output buffer for results.
 // **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
 // Returns true on success; false if word is not valid UTF-8 or output buffer too small.
+// This function may panic!() if the dictionary is not valid.
 #[no_mangle]
-pub extern "C" fn find_hyphen_values(dic: &Mmap, word: *const c_char, word_len: u32,
-                                     hyphens: *mut u8, hyphens_len: u32) -> bool {
+pub extern "C" fn find_hyphen_values_file(dic: *const HyphDic, word: *const c_char, word_len: u32,
+                                          hyphens: *mut u8, hyphens_len: u32) -> bool {
     if word_len > hyphens_len {
         return false;
     }
@@ -464,6 +473,29 @@ pub extern "C" fn find_hyphen_values(dic: &Mmap, word: *const c_char, word_len: 
         Err(_) => return false,
     };
     let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
+    (unsafe { &*(dic as *const Mmap) } ).find_hyphen_values(word_str, hyphen_buf);
+    true
+}
+
+// C-callable function to find hyphenation values for a word,
+// using a dictionary supplied as a raw memory buffer by the caller.
+// Caller must supply the `hyphens` output buffer for results.
+// **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
+// Returns true on success; false if word is not valid UTF-8 or output buffer too small.
+// This function may panic!() if the dictionary is not valid.
+#[no_mangle]
+pub extern "C" fn find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
+                                         word: *const c_char, word_len: u32,
+                                         hyphens: *mut u8, hyphens_len: u32) -> bool {
+    if word_len > hyphens_len {
+        return false;
+    }
+    let word_str = match str::from_utf8(unsafe { slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
+        Ok(word) => word,
+        Err(_) => return false,
+    };
+    let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
+    let dic = unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) };
     dic.find_hyphen_values(word_str, hyphen_buf);
     true
 }
