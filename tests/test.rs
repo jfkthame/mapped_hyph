@@ -137,4 +137,22 @@ mod tests {
         assert_eq!(dic.hyphenate_word("övéit", '='), "övéit");
         assert_eq!(dic.hyphenate_word("అంగడిధర", '='), "అం=గ=డిధర");
     }
+
+    #[test]
+    fn num() {
+        let dic_path = "tests/num.hyf";
+        let dic = match mmhyph::load_file(dic_path) {
+            Some(dic) => dic,
+            _ => panic!("failed to load dictionary {}", dic_path),
+        };
+        assert_eq!(dic.hyphenate_word("foobar", '='), "foobar");
+        assert_eq!(dic.hyphenate_word("foobarfoobar", '='), "foobar=foobar");
+        assert_eq!(dic.hyphenate_word("barfoobarfoo", '='), "barfoo=barfoo");
+        assert_eq!(dic.hyphenate_word("123foobarfoobar", '='), "123foobar=foobar");
+        assert_eq!(dic.hyphenate_word("foobarfoobar123", '='), "foobar=foobar123");
+        assert_eq!(dic.hyphenate_word("123foobarfoobar123", '='), "123foobar=foobar123");
+        assert_eq!(dic.hyphenate_word("123barfoobarfoo", '='), "123barfoo=barfoo");
+        assert_eq!(dic.hyphenate_word("barfoobarfoo123", '='), "barfoo=barfoo123");
+        assert_eq!(dic.hyphenate_word("123barfoobarfoo123", '='), "123barfoo=barfoo123");
+    }
 }

@@ -123,6 +123,10 @@ fn is_utf8_trail_byte(byte: u8) -> bool {
     (byte & 0xC0) == 0x80
 }
 
+fn is_ascii_digit(byte: u8) -> bool {
+    byte <= 0x39 && byte >= 0x30
+}
+
 // A hyphenation Level has a header followed by State records and packed string
 // data. The total size of the slice depends on the number and size of the
 // States and Strings it contains.
@@ -153,10 +157,16 @@ impl Level<'_> {
         max(1, self.data[13] as usize)
     }
     fn clh_min(&self) -> usize {
-        max(1, self.data[14] as usize)
+        if self.data[14] == 0 {
+            return self.lh_min();
+        }
+        self.data[14] as usize
     }
     fn crh_min(&self) -> usize {
-        max(1, self.data[15] as usize)
+        if self.data[15] == 0 {
+            return self.rh_min();
+        }
+        self.data[15] as usize
     }
     fn word_boundary_mins(&self) -> (usize, usize, usize, usize) {
         (self.lh_min(), self.rh_min(), self.clh_min(), self.crh_min())
@@ -242,56 +252,62 @@ impl Level<'_> {
                 st = self.get_state(state.fallback_state());
             }
         }
-        // If the word was not purely ASCII, the use of lh_min and rh_min above
-        // may not have correctly excluded enough positions in the UTF-8 string,
-        // so we need to fix things up here.
-        if char_count < word.len() {
-            let mut index = 0;
-            let mut count = 0;
-            let word_bytes = word.as_bytes();
-            // Handle lh_min
-            while count < lh_min - 1 {
-                let byte = word_bytes[index];
-                if byte < 0x80 {
-                    values[index] = 0;
-                    index += 1;
-                } else if byte == 0xEF && word_bytes[index + 1] == 0xAC {
-                    count += lig_length(word_bytes[index + 2]);
-                    values[index] = 0;
-                    values[index + 1] = 0;
-                    values[index + 2] = 0;
-                    index += 3;
-                    continue;
-                } else {
-                    values[index] = 0;
-                    index += 1;
-                    while index < word_bytes.len() && is_utf8_trail_byte(word_bytes[index])  {
-                        values[index] = 0;
-                        index += 1;
-                    }
+
+        // If the word was not purely ASCII, or if the word begins/ends with
+        // digits the use of lh_min and rh_min above may not have correctly
+        // excluded enough positions, so we need to fix things up here.
+        let mut index = 0;
+        let mut count = 0;
+        let word_bytes = word.as_bytes();
+        // Handle lh_min
+        while count < lh_min - 1 && index < word_bytes.len() {
+            let byte = word_bytes[index];
+            values[index] = 0;
+            if byte < 0x80 {
+                index += 1;
+                if is_ascii_digit(byte) {
+                    continue; // ASCII digits don't count
                 }
-                count += 1;
+            } else if byte == 0xEF && index + 2 < word_bytes.len() && word_bytes[index + 1] == 0xAC {
+                count += lig_length(word_bytes[index + 2]);
+                values[index + 1] = 0;
+                values[index + 2] = 0;
+                index += 3;
+                continue;
+            } else {
+                index += 1;
+                while index < word_bytes.len() && is_utf8_trail_byte(word_bytes[index])  {
+                    values[index] = 0;
+                    index += 1;
+                }
             }
-            // Handle rh_min
-            count = 0;
-            index = word.len();
-            while count < rh_min {
-                index -= 1;
-                let byte = word_bytes[index];
+            count += 1;
+        }
+
+        // Handle rh_min
+        count = 0;
+        index = word.len();
+        while count < rh_min && index > 0 {
+            index -= 1;
+            let byte = word_bytes[index];
+            if index < word.len() - 1 {
                 values[index] = 0;
-                if byte < 0x80 {
-                    count += 1;
-                    continue;
-                }
-                if is_utf8_trail_byte(byte) {
-                    continue;
-                }
-                if byte == 0xEF && word_bytes[index + 1] == 0xAC {
-                    count += lig_length(word_bytes[index + 2]);
-                    continue;
-                }
-                count += 1;
             }
+            if byte < 0x80 {
+                // Only count if not an ASCII digit
+                if !is_ascii_digit(byte) {
+                    count += 1;
+                }
+                continue;
+            }
+            if is_utf8_trail_byte(byte) {
+                continue;
+            }
+            if byte == 0xEF && word_bytes[index + 1] == 0xAC {
+                count += lig_length(word_bytes[index + 2]);
+                continue;
+            }
+            count += 1;
         }
     }
 }

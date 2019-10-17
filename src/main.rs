@@ -41,4 +41,14 @@ fn main() {
     };
     println!("{}", dic3.hyphenate_word("övéit", '='));
     println!("{}", dic3.hyphenate_word("అంగడిధర", '='));
+
+    let dic4 = match mmhyph::load_file("tests/num.hyf") {
+        Some(dic) => dic,
+        _ => panic!("failed to load dictionary {}", "tests/num.hyf"),
+    };
+
+    println!("{}", dic4.hyphenate_word("123foobar123", '='));
+    println!("{}", dic4.hyphenate_word("123foobarfoobar", '='));
+    println!("{}", dic4.hyphenate_word("foobarfoobar123", '='));
+    println!("{}", dic4.hyphenate_word("123foobarfoobar123", '='));
 }
