@@ -2,14 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-extern crate mmhyph;
+extern crate mapped_hyph;
 
-use mmhyph::Hyphenator;
+use mapped_hyph::Hyphenator;
 
 fn main() {
     let dic_path = "hyph_en_US.hyf";
 
-    let dic = match mmhyph::load_file(dic_path) {
+    let dic = match mapped_hyph::load_file(dic_path) {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
@@ -32,21 +32,21 @@ fn main() {
     println!("{}", dic.hyphenate_word("-x-mailing", '='));
     println!("{}", dic.hyphenate_word("-strikeout-", '='));
 
-    let dic2 = match mmhyph::load_file("tests/compound.hyf") {
+    let dic2 = match mapped_hyph::load_file("tests/compound.hyf") {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", "tests/compound.hyf"),
     };
 
     println!("{}", dic2.hyphenate_word("motorcycle", '='));
 
-    let dic3 = match mmhyph::load_file("tests/rhmin.hyf") {
+    let dic3 = match mapped_hyph::load_file("tests/rhmin.hyf") {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
     println!("{}", dic3.hyphenate_word("övéit", '='));
     println!("{}", dic3.hyphenate_word("అంగడిధర", '='));
 
-    let dic4 = match mmhyph::load_file("tests/num.hyf") {
+    let dic4 = match mapped_hyph::load_file("tests/num.hyf") {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", "tests/num.hyf"),
     };

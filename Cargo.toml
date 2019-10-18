@@ -1,5 +1,5 @@
 [package]
-name = "mmhyph"
+name = "mapped_hyph"
 description = "Hyphenation using precompiled memory-mapped tables"
 version = "0.1.0"
 authors = ["Jonathan Kew <jfkthame@gmail.com>"]

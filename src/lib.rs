@@ -85,6 +85,8 @@ impl State<'_> {
         let transition_offset = if self.is_extended() { 12 } else { 8 };
         assert!(self.data.len() == transition_offset + count * 4);
         let trans_ptr = &self.data[transition_offset] as *const u8 as *const Transition;
+        // This is OK because we assert!() above that self.data.len() is large enough
+        // to accommodate the expected number of Transitions.
         unsafe { slice::from_raw_parts(trans_ptr, count) }
     }
     // Look up the Transition for a given input byte, or None.
