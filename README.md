@@ -31,7 +31,7 @@ hyphenation supported in Gecko.
 The compiled hyphenation dictionary format includes provision for replacement
 strings and indexes, as used by libhyphen to support non-standard hyphenations
 (e.g. German "Schiffahrt" -> "Schiff-fahrt"), but the `find_hyphen_values` function
-will panic!() with a "not yet implemented" message if it encounters such a case.
+will ignore any such hyphenation positions it finds.
 (None of the hyphenation dictionaries shipping with Firefox includes such rules.)
 
 ## Licensing
@@ -42,7 +42,8 @@ or the [MPL 2.0](https://www.mozilla.org/en-US/MPL/2.0/) license online.
 
 ## Documentation
 
-TODO
+Use `cargo doc --open` to view (admittedly brief) documentation generated from
+comments in the source.
 
 ## C and C++ bindings
 
