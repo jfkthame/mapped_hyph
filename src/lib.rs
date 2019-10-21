@@ -26,7 +26,7 @@ const INVALID_STATE_OFFSET: usize = 0xffffff;
 // memory layout we expect.
 #[repr(C)]
 #[derive(Debug,Copy,Clone)]
-struct Transition ( u8, u8, u8, u8 );
+struct Transition(u8, u8, u8, u8);
 
 impl Transition {
     fn new_state_offset(&self) -> usize {
@@ -83,9 +83,9 @@ impl State<'_> {
             return &[];
         }
         let transition_offset = if self.is_extended() { 12 } else { 8 };
-        assert!(self.data.len() == transition_offset + count * 4);
+        assert_eq!(self.data.len(), transition_offset + count * 4);
         let trans_ptr = &self.data[transition_offset] as *const u8 as *const Transition;
-        // This is OK because we assert!() above that self.data.len() is large enough
+        // This is OK because we assert above that self.data.len() is large enough
         // to accommodate the expected number of Transitions.
         unsafe { slice::from_raw_parts(trans_ptr, count) }
     }
@@ -179,7 +179,7 @@ impl Level<'_> {
     // This returns a byte slice referencing the string at a given offset,
     // or an empty slice if invalid.
     fn string_at_offset(&self, offset: usize) -> &'_ [u8] {
-        assert!(offset != INVALID_STRING_OFFSET);
+        assert_ne!(offset, INVALID_STRING_OFFSET);
         let string_base = self.string_data_base() as usize + offset;
         let len = self.data[string_base] as usize;
         self.data.get(string_base + 1 .. string_base + 1 + len).unwrap()
@@ -487,7 +487,7 @@ impl Hyphenator for &[u8] {
                 n += 1;
             }
         }
-        debug_assert!(n == hyph_count);
+        debug_assert_eq!(n, hyph_count);
         result
     }
 }
@@ -525,14 +525,8 @@ impl Hyphenator for Mmap {
 ///
 /// This does *not* check the validity of the file contents!
 pub fn load_file(dic_path: &str) -> Option<Mmap> {
-    let file = match File::open(dic_path) {
-        Err(_) => return None,
-        Ok(file) => file,
-    };
-    let dic = match unsafe { Mmap::map(&file) } {
-        Err(_) => return None,
-        Ok(mmap) => mmap,
-    };
+    let file = File::open(dic_path).ok()?;
+    let dic = unsafe { Mmap::map(&file) }.ok()?;
     Some(dic)
 }
 
