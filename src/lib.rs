@@ -25,7 +25,7 @@ const INVALID_STATE_OFFSET: usize = 0xffffff;
 // State::transitions() method below), so use repr(C) to ensure we have the
 // memory layout we expect.
 #[repr(C)]
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug,Copy,Clone)]
 struct Transition ( u8, u8, u8, u8 );
 
 impl Transition {
@@ -235,7 +235,7 @@ impl Level<'_> {
                         let match_offset = state.match_string_offset();
                         if match_offset != INVALID_STRING_OFFSET {
                             if state.is_extended() {
-                                panic!("not yet implemented");
+                                debug_assert!(false, "extended hyphenation not supported by this function");
                             } else {
                                 let match_str = self.string_at_offset(match_offset);
                                 let offset = i + 1 - match_str.len();
@@ -341,6 +341,7 @@ impl Level<'_> {
     }
 }
 
+// Implementation details not exposed in the public API:
 trait HyphenatorImpl {
     fn num_levels(&self) -> u32;
     fn level(&self, i: u32) -> Level;
@@ -351,10 +352,9 @@ impl HyphenatorImpl for &[u8] {
         u32::from_le_bytes(*array_ref!(self, 0, 4))
     }
     fn level(&self, i: u32) -> Level {
-        let file_size = self.len() as usize;
         let offset = u32::from_le_bytes(*array_ref!(self, (4 + 4 * i) as usize, 4)) as usize;
         let limit = if i == self.num_levels() - 1 {
-            file_size
+            self.len()
         } else {
             u32::from_le_bytes(*array_ref!(self, (4 + 4 * i + 4) as usize, 4)) as usize
         };
@@ -364,27 +364,41 @@ impl HyphenatorImpl for &[u8] {
     }
 }
 
+/// Hyphenation engine encapsulating a language-specific set of patterns (rules)
+/// that identify possible break positions within a word.
 pub trait Hyphenator {
+
+    /// Identify acceptable hyphenation positions in the given `word`.
+    ///
+    /// The caller-supplied `values` must be at least as long as the `word`;
+    /// it will *not* be resized by this function.
+    ///
+    /// On return, any elements with an odd value indicate positions in the word
+    /// after which a hyphen could be inserted.
+    ///
+    /// Returns the number of possible hyphenation positions that were found.
+    ///
+    /// # Panics
+    /// If the given `values` slice is too small to hold the results.
     fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize;
-    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String;
+
+    /// Generate the hyphenated form of a `word` by inserting the given `hyphen_char`
+    /// at each valid break position.
+    fn hyphenate_word(&self, word: &str, hyphen_char: char) -> String;
 }
 
+/// Implementation of the `Hyphenator` trait for a compiled hyphenation file
+/// that is loaded in an arbitrary block of memory.
 impl Hyphenator for &[u8] {
-    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
-        let mut values: Vec<u8> = vec![0; word.len()];
-        let hyph_count = self.find_hyphen_values(word, &mut values);
-        let mut result = word.to_string();
-        let mut n = 0;
-        for i in (0 .. word.len()).rev() {
-            if is_odd(values[i]) {
-                result.insert(i + 1, hyphchar);
-                n += 1;
-            }
-        }
-        assert!(n == hyph_count);
-        result
-    }
+    /// Identify acceptable hyphenation positions in the given `word`;
+    /// see trait documentation above.
+    ///
+    /// # Panics
+    /// If the block of memory represented by `self` is not in fact a valid
+    /// hyphenation dictionary, this function may panic with an overflow or
+    /// array bounds violation.
     fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize {
+        assert!(values.len() >= word.len());
         values.iter_mut().for_each(|x| *x = 0);
         let top_level = self.level(0);
         let (lh_min, rh_min, clh_min, crh_min) = top_level.word_boundary_mins();
@@ -454,17 +468,62 @@ impl Hyphenator for &[u8] {
 
         hyph_count
     }
+
+    /// Generate the hyphenated form of a `word` by inserting the given `hyphen_char`
+    /// at each valid break position.
+    ///
+    /// # Panics
+    /// If the block of memory represented by `self` is not in fact a valid
+    /// hyphenation dictionary, this function may panic with an overflow or
+    /// array bounds violation.
+    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
+        let mut values = vec![0u8; word.len()];
+        let hyph_count = self.find_hyphen_values(word, &mut values);
+        let mut result = word.to_string();
+        let mut n = 0;
+        for i in (0 .. word.len()).rev() {
+            if is_odd(values[i]) {
+                result.insert(i + 1, hyphchar);
+                n += 1;
+            }
+        }
+        debug_assert!(n == hyph_count);
+        result
+    }
 }
 
+/// Implementation of the `Hyphenator` trait for a compiled hyphenation file
+/// that is loaded as a memory-mapped file via the `memmap` crate.
 impl Hyphenator for Mmap {
+    /// Identify acceptable hyphenation positions in the given `word`;
+    /// see trait documentation above.
+    ///
+    /// # Panics
+    /// If the memory-mapped file represented by `self` is not in fact a valid
+    /// hyphenation dictionary, this function may panic with an overflow or
+    /// array bounds violation.
     fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize {
         self.deref().find_hyphen_values(word, values)
     }
+
+    /// Generate the hyphenated form of a `word` by inserting the given `hyphen_char`
+    /// at each valid break position.
+    ///
+    /// # Panics
+    /// If the memory-mapped file represented by `self` is not in fact a valid
+    /// hyphenation dictionary, this function may panic with an overflow or
+    /// array bounds violation.
     fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
         self.deref().hyphenate_word(word, hyphchar)
     }
 }
 
+/// Load the compiled hyphenation file at `dic_path`, if present.
+///
+/// Returns `None` if the specified file cannot be opened or mapped,
+/// otherwise returns a `memmap::Mmap` mapping the file.
+///
+/// This does *not* check the validity of the file contents!
 pub fn load_file(dic_path: &str) -> Option<Mmap> {
     let file = match File::open(dic_path) {
         Err(_) => return None,
@@ -477,17 +536,23 @@ pub fn load_file(dic_path: &str) -> Option<Mmap> {
     Some(dic)
 }
 
-// Opaque type for use in the FFI function signatures;
-// it's really just an memmap::Mmap.
+/// Opaque type representing a hyphenation dictionary loaded from a file,
+/// for use in FFI function signatures.
 pub struct HyphDic;
 
-// C-callable function to load a hyphenation dictionary from a file;
-// returns null on failure.
-// `path` must be a valid UTF-8 string, or it will panic!
-// This does not validate that the file actually contains usable hyphenation data,
-// it only opens the file (read-only) and mmap's it into memory.
+/// C-callable function to load a hyphenation dictionary from a file at `path`.
+///
+/// Returns null on failure.
+///
+/// This does not validate that the file actually contains usable hyphenation data,
+/// it only opens the file (read-only) and mmap's it into memory.
+///
+/// The returned `HyphDic` should be released with `mapped_hyph_free_dictionary`.
+///
+/// # Safety
+/// The given `path` must be a valid pointer to a NUL-terminated (C-style) string.
 #[no_mangle]
-pub extern "C" fn load_hyphenation_file(path: *const c_char) -> *const HyphDic {
+pub extern "C" fn mapped_hyph_load_dictionary(path: *const c_char) -> *const HyphDic {
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(str) => str,
         Err(_) => return std::ptr::null(),
@@ -499,22 +564,39 @@ pub extern "C" fn load_hyphenation_file(path: *const c_char) -> *const HyphDic {
     Box::into_raw(hyph) as *const HyphDic
 }
 
-// C-callable function to free a hyphenation dictionary loaded by load_hyphenation_file.
+/// C-callable function to free a hyphenation dictionary
+/// that was loaded by `mapped_hyph_load_dictionary`.
+///
+/// # Safety
+/// The `dic` parameter must be a `HyphDic` pointer obtained from `mapped_hyph_load_dictionary`,
+/// and not previously freed.
 #[no_mangle]
-pub extern "C" fn free_hyphenation_file(dic: *mut HyphDic) {
+pub extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
     unsafe { Box::from_raw(dic) };
 }
 
-// C-callable function to find hyphenation values for a word,
-// using a dictionary loaded by load_hyphenation_file().
-// Caller must supply the `hyphens` output buffer for results.
-// **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
-// Returns -1 if word is not valid UTF-8 or output buffer too small;
-// otherwise returns the number of hyphenation positions found.
-// This function may panic!() if the dictionary is not valid.
+/// C-callable function to find hyphenation values for a given `word`,
+/// using a dictionary loaded via `mapped_hyph_load_dictionary`.
+///
+/// The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters) long.
+///
+/// Caller must supply the `hyphens` output buffer for results; its size is given in `hyphens_len`.
+/// It should be at least `word_len` elements long.
+///
+/// Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is too small.
+/// Otherwise returns the number of potential hyphenation positions found.
+///
+/// # Panics
+/// This function may panic if the given dictionary is not valid.
+///
+/// # Safety
+/// The `dic` parameter must be a `HyphDic` pointer obtained from `mapped_hyph_load_dictionary`.
+///
+/// The `word` and `hyphens` parameter must be valid pointers to memory buffers of
+/// at least the respective sizes `word_len` and `hyphens_len`.
 #[no_mangle]
-pub extern "C" fn find_hyphen_values_file(dic: *const HyphDic, word: *const c_char, word_len: u32,
-                                          hyphens: *mut u8, hyphens_len: u32) -> i32 {
+pub extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic, word: *const c_char, word_len: u32,
+                                                     hyphens: *mut u8, hyphens_len: u32) -> i32 {
     if word_len > hyphens_len {
         return -1;
     }
@@ -526,17 +608,31 @@ pub extern "C" fn find_hyphen_values_file(dic: *const HyphDic, word: *const c_ch
     (unsafe { &*(dic as *const Mmap) } ).find_hyphen_values(word_str, hyphen_buf) as i32
 }
 
-// C-callable function to find hyphenation values for a word,
-// using a dictionary supplied as a raw memory buffer by the caller.
-// Caller must supply the `hyphens` output buffer for results.
-// **NOTE** that the `hyphens` buffer must be at least `word_len` elements long.
-// Returns -1 if word is not valid UTF-8 or output buffer too small;
-// otherwise returns the number of hyphenation positions found.
-// This function may panic!() if the dictionary is not valid.
+/// C-callable function to find hyphenation values for a given `word`,
+/// using a dictionary loaded and owned by the caller.
+///
+/// The dictionary is supplied as a raw memory buffer `dic_buf` of size `dic_len`.
+///
+/// The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters) long.
+///
+/// Caller must supply the `hyphens` output buffer for results; its size is given in `hyphens_len`.
+/// It should be at least `word_len` elements long.
+///
+/// Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is too small.
+/// Otherwise returns the number of potential hyphenation positions found.
+///
+/// # Panics
+/// This function may panic if the given dictionary is not valid.
+///
+/// # Safety
+/// The `dic_buf` parameter must be a valid pointer to a memory block of size at least `dic_len`.
+///
+/// The `word` and `hyphens` parameter must be valid pointers to memory buffers of
+/// at least the respective sizes `word_len` and `hyphens_len`.
 #[no_mangle]
-pub extern "C" fn find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
-                                         word: *const c_char, word_len: u32,
-                                         hyphens: *mut u8, hyphens_len: u32) -> i32 {
+pub extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
+                                                     word: *const c_char, word_len: u32,
+                                                     hyphens: *mut u8, hyphens_len: u32) -> i32 {
     if word_len > hyphens_len {
         return -1;
     }

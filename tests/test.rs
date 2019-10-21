@@ -29,6 +29,10 @@ mod tests {
         assert_eq!(hyph.hyphenate_word("supercalifragilisticexpialidocious", '-'), "su-per-cal-ifrag-ilis-tic-ex-pi-ali-do-cious");
     }
 
+    // Testcases adapted from tests included with libhyphen.
+    // (Using only the UTF-8 dictionaries/tests, and omitting those that require
+    // the extended hyphenation algorithm.)
+
     #[test]
     fn base() {
         let dic_path = "tests/base.hyf";
