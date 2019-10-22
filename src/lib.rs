@@ -227,11 +227,9 @@ impl Level<'_> {
                     break;
                 }
                 let state = st.unwrap();
-                let tr = state.transition_for(b);
-                if tr.is_some() {
-                    st = self.get_state(tr.unwrap().new_state_offset());
-                    if st.is_some() {
-                        let state = st.unwrap();
+                if let Some(tr) = state.transition_for(b) {
+                    st = self.get_state(tr.new_state_offset());
+                    if let Some(state) = st {
                         let match_offset = state.match_string_offset();
                         if match_offset != INVALID_STRING_OFFSET {
                             if state.is_extended() {
