@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+/* clang-format off */
+
 #ifndef mapped_hyph_h
 #define mapped_hyph_h
 
@@ -25,22 +27,26 @@ extern "C" {
  * C-callable function to find hyphenation values for a given `word`,
  * using a dictionary loaded via `mapped_hyph_load_dictionary`.
  *
- * The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters) long.
+ * The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters)
+ * long.
  *
- * Caller must supply the `hyphens` output buffer for results; its size is given in `hyphens_len`.
+ * Caller must supply the `hyphens` output buffer for results; its size is
+ * given in `hyphens_len`.
  * It should be at least `word_len` elements long.
  *
- * Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is too small.
+ * Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is
+ * too small.
  * Otherwise returns the number of potential hyphenation positions found.
  *
  * # Panics
  * This function may panic if the given dictionary is not valid.
  *
  * # Safety
- * The `dic` parameter must be a `HyphDic` pointer obtained from `mapped_hyph_load_dictionary`.
+ * The `dic` parameter must be a `HyphDic` pointer obtained from
+ * `mapped_hyph_load_dictionary`.
  *
- * The `word` and `hyphens` parameter must be valid pointers to memory buffers of
- * at least the respective sizes `word_len` and `hyphens_len`.
+ * The `word` and `hyphens` parameter must be valid pointers to memory buffers
+ * of at least the respective sizes `word_len` and `hyphens_len`.
  */
 int32_t mapped_hyph_find_hyphen_values_dic(const HyphDic *dic,
                                            const char *word,
@@ -52,24 +58,29 @@ int32_t mapped_hyph_find_hyphen_values_dic(const HyphDic *dic,
  * C-callable function to find hyphenation values for a given `word`,
  * using a dictionary loaded and owned by the caller.
  *
- * The dictionary is supplied as a raw memory buffer `dic_buf` of size `dic_len`.
+ * The dictionary is supplied as a raw memory buffer `dic_buf` of size
+ * `dic_len`.
  *
- * The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters) long.
+ * The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters)
+ * long.
  *
- * Caller must supply the `hyphens` output buffer for results; its size is given in `hyphens_len`.
+ * Caller must supply the `hyphens` output buffer for results; its size is
+ * given in `hyphens_len`.
  * It should be at least `word_len` elements long.
  *
- * Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is too small.
+ * Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is
+ * too small.
  * Otherwise returns the number of potential hyphenation positions found.
  *
  * # Panics
  * This function may panic if the given dictionary is not valid.
  *
  * # Safety
- * The `dic_buf` parameter must be a valid pointer to a memory block of size at least `dic_len`.
+ * The `dic_buf` parameter must be a valid pointer to a memory block of size
+ * at least `dic_len`.
  *
- * The `word` and `hyphens` parameter must be valid pointers to memory buffers of
- * at least the respective sizes `word_len` and `hyphens_len`.
+ * The `word` and `hyphens` parameter must be valid pointers to memory buffers
+ * of at least the respective sizes `word_len` and `hyphens_len`.
  */
 int32_t mapped_hyph_find_hyphen_values_raw(const uint8_t *dic_buf,
                                            uint32_t dic_len,
@@ -83,8 +94,8 @@ int32_t mapped_hyph_find_hyphen_values_raw(const uint8_t *dic_buf,
  * that was loaded by `mapped_hyph_load_dictionary`.
  *
  * # Safety
- * The `dic` parameter must be a `HyphDic` pointer obtained from `mapped_hyph_load_dictionary`,
- * and not previously freed.
+ * The `dic` parameter must be a `HyphDic` pointer obtained from
+ * `mapped_hyph_load_dictionary`, and not previously freed.
  */
 void mapped_hyph_free_dictionary(HyphDic *dic);
 
@@ -93,13 +104,14 @@ void mapped_hyph_free_dictionary(HyphDic *dic);
  *
  * Returns null on failure.
  *
- * This does not validate that the file actually contains usable hyphenation data,
- * it only opens the file (read-only) and mmap's it into memory.
+ * This does not validate that the file actually contains usable hyphenation
+ * data, it only opens the file (read-only) and mmap's it into memory.
  *
- * The returned `HyphDic` should be released with `mapped_hyph_free_dictionary`.
+ * The returned `HyphDic` must be released with `mapped_hyph_free_dictionary`.
  *
  * # Safety
- * The given `path` must be a valid pointer to a NUL-terminated (C-style) string.
+ * The given `path` must be a valid pointer to a NUL-terminated (C-style)
+ * string.
  */
 const HyphDic *mapped_hyph_load_dictionary(const char *path);
 
@@ -108,3 +120,5 @@ const HyphDic *mapped_hyph_load_dictionary(const char *path);
 #endif // __cplusplus
 
 #endif /* mapped_hyph_h */
+
+/* clang-format on */
