@@ -724,6 +724,9 @@ pub extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len
 /// hyphenation dictionary, `false` if it is clearly not usable.
 #[no_mangle]
 pub extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic_len: u32) -> bool {
+    if dic_buf == 0 as *const u8 {
+        return false;
+    }
     let dic = unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) };
     dic.is_valid_hyphenator()
 }
