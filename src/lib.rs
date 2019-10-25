@@ -94,12 +94,7 @@ impl State<'_> {
         // The transitions array is sorted by match_byte() value, but there are
         // usually very few entries; benchmarking showed that using binary_search_by
         // here gave no benefit (possibly slightly slower).
-        for t in self.transitions() {
-            if t.match_byte() == b {
-                return Some(*t);
-            }
-        }
-        None
+        self.transitions().iter().copied().find(|t| t.match_byte() == b)
     }
     #[allow(dead_code)]
     fn deep_show(&self, prefix: &str, dic: &Level) {
