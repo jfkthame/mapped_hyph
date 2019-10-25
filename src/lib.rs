@@ -17,6 +17,9 @@ use std::os::raw::c_char;
 
 use memmap::Mmap;
 
+// 4-byte identification expected at beginning of a compiled dictionary file.
+const MAGIC_NUMBER: [u8; 4] = [b'H', b'y', b'f', b'0'];
+
 const INVALID_STRING_OFFSET: usize = 0xffff;
 const INVALID_STATE_OFFSET: usize = 0xffffff;
 
@@ -179,20 +182,28 @@ impl Level<'_> {
     // This returns a byte slice referencing the string at a given offset,
     // or an empty slice if invalid.
     fn string_at_offset(&self, offset: usize) -> &'_ [u8] {
-        assert_ne!(offset, INVALID_STRING_OFFSET);
+        if offset == INVALID_STRING_OFFSET {
+            return &[];
+        }
         let string_base = self.string_data_base() as usize + offset;
+        if string_base + 1 > self.data.len() {
+            return &[];
+        }
         let len = self.data[string_base] as usize;
+        if string_base + 1 + len > self.data.len() {
+            return &[];
+        }
         self.data.get(string_base + 1 .. string_base + 1 + len).unwrap()
     }
     // The nohyphen field actually contains multiple NUL-separated substrings;
     // return them as a vector of individual byte slices.
-    fn nohyphen(&self) -> Option<Vec<&[u8]>> {
+    fn nohyphen(&self) -> Vec<&[u8]> {
         let string_offset = self.nohyphen_string_offset();
-        if string_offset == INVALID_STRING_OFFSET {
-            None
-        } else {
-            Some(self.string_at_offset(string_offset as usize).split(|&b| b == 0).collect())
+        let nohyph_str = self.string_at_offset(string_offset as usize);
+        if nohyph_str.len() == 0 {
+            return vec![];
         }
+        nohyph_str.split(|&b| b == 0).collect()
     }
     // States are represented as an offset from the Level's state_data_base.
     // This returns the State at a given offset, or None if invalid.
@@ -200,13 +211,18 @@ impl Level<'_> {
         if offset == INVALID_STATE_OFFSET {
             return None;
         }
-        assert!(offset < self.string_data_base() - self.state_data_base());
-        let base = self.state_data_base();
+        let state_base = self.state_data_base() + offset;
+        if state_base + 8 > self.string_data_base() {
+            return None;
+        }
         let state_header = State {
-            data: &self.data[base + offset .. base + offset + 8],
+            data: &self.data[state_base .. state_base + 8],
         };
         let length = if state_header.is_extended() { 12 } else { 8 } + 4 * state_header.num_transitions() as usize;
-        Some(State{ data: &self.data[base + offset .. base + offset + length] })
+        if state_base + length > self.string_data_base() {
+            return None;
+        }
+        Some(State{ data: &self.data[state_base .. state_base + length] })
     }
     // Sets hyphenation values (odd = potential break, even = no break) in values[],
     // and returns the change in the number of odd values present, so the caller can
@@ -341,20 +357,25 @@ impl Level<'_> {
 
 // Implementation details not exposed in the public API:
 trait HyphenatorImpl {
+    fn magic_number(&self) -> &[u8];
     fn num_levels(&self) -> u32;
     fn level(&self, i: u32) -> Level;
 }
 
 impl HyphenatorImpl for &[u8] {
+    fn magic_number(&self) -> &[u8] {
+        &self[0 .. 4]
+    }
     fn num_levels(&self) -> u32 {
-        u32::from_le_bytes(*array_ref!(self, 0, 4))
+        u32::from_le_bytes(*array_ref!(self, 4, 4))
     }
     fn level(&self, i: u32) -> Level {
-        let offset = u32::from_le_bytes(*array_ref!(self, (4 + 4 * i) as usize, 4)) as usize;
+        const FILE_HEADER_SIZE: u32 = 8; // 4-byte magic number, 4-byte count of levels
+        let offset = u32::from_le_bytes(*array_ref!(self, (FILE_HEADER_SIZE + 4 * i) as usize, 4)) as usize;
         let limit = if i == self.num_levels() - 1 {
             self.len()
         } else {
-            u32::from_le_bytes(*array_ref!(self, (4 + 4 * i + 4) as usize, 4)) as usize
+            u32::from_le_bytes(*array_ref!(self, (FILE_HEADER_SIZE + 4 * i + 4) as usize, 4)) as usize
         };
         Level {
             data: &self[offset .. limit]
@@ -365,7 +386,6 @@ impl HyphenatorImpl for &[u8] {
 /// Hyphenation engine encapsulating a language-specific set of patterns (rules)
 /// that identify possible break positions within a word.
 pub trait Hyphenator {
-
     /// Identify acceptable hyphenation positions in the given `word`.
     ///
     /// The caller-supplied `values` must be at least as long as the `word`;
@@ -383,6 +403,10 @@ pub trait Hyphenator {
     /// Generate the hyphenated form of a `word` by inserting the given `hyphen_char`
     /// at each valid break position.
     fn hyphenate_word(&self, word: &str, hyphen_char: char) -> String;
+
+    /// Check if the given file or block of memory looks like it could be a
+    /// valid hyphenation table.
+    fn is_valid_hyphenator(&self) -> bool;
 }
 
 /// Implementation of the `Hyphenator` trait for a compiled hyphenation file
@@ -443,11 +467,11 @@ impl Hyphenator for &[u8] {
 
         // Only need to check nohyphen strings if top-level (compound) breaks were found.
         if compound && hyph_count > 0 {
-            let nohyph = &top_level.nohyphen();
-            if nohyph.is_some() {
+            let nohyph = top_level.nohyphen();
+            if nohyph.len() > 0 {
                 for i in lh_min .. word.len() - rh_min + 1 {
                     if is_odd(values[i - 1]) {
-                        for nh in nohyph.as_ref().unwrap() {
+                        for nh in &nohyph {
                             if i + nh.len() <= word.len() && *nh == &word.as_bytes()[i .. i + nh.len()] {
                                 values[i - 1] = 0;
                                 hyph_count -= 1;
@@ -488,6 +512,40 @@ impl Hyphenator for &[u8] {
         debug_assert_eq!(n, hyph_count);
         result
     }
+
+    /// Check if the block of memory looks like it could be a valid hyphenation
+    /// table.
+    fn is_valid_hyphenator(&self) -> bool {
+        // Size must be at least 4 bytes for magic_number + 4 bytes num_levels;
+        // smaller than this cannot be safely inspected.
+        if self.len() < 8 {
+            return false;
+        }
+        if self.magic_number() != MAGIC_NUMBER {
+            return false;
+        }
+        // For each level, there's a 4-byte offset in the header, and the level
+        // has its own 16-byte header, so we can check a minimum size again here.
+        let num_levels = self.num_levels();
+        if self.len() < 8 + 16 * num_levels as usize {
+            return false;
+        }
+        // Check that state_data_base and string_data_base for each hyphenation
+        // level are within range.
+        for l in 0 .. num_levels {
+            let level = self.level(l);
+            if level.state_data_base() < 16 ||
+                   level.state_data_base() > level.string_data_base() ||
+                   level.string_data_base() > level.data.len() {
+                return false;
+            }
+            // TODO: consider doing more extensive validation of states and
+            // strings within the level?
+        }
+        // It's still possible the dic is internally broken, but at least it's
+        // worth trying to use it!
+        true
+    }
 }
 
 /// Implementation of the `Hyphenator` trait for a compiled hyphenation file
@@ -514,6 +572,11 @@ impl Hyphenator for Mmap {
     fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
         self.deref().hyphenate_word(word, hyphchar)
     }
+
+    /// Check if the file looks like it could be a valid hyphenation table.
+    fn is_valid_hyphenator(&self) -> bool {
+        self.deref().is_valid_hyphenator()
+    }
 }
 
 /// Load the compiled hyphenation file at `dic_path`, if present.
@@ -525,7 +588,10 @@ impl Hyphenator for Mmap {
 pub fn load_file(dic_path: &str) -> Option<Mmap> {
     let file = File::open(dic_path).ok()?;
     let dic = unsafe { Mmap::map(&file) }.ok()?;
-    Some(dic)
+    if dic.is_valid_hyphenator() {
+        return Some(dic);
+    }
+    None
 }
 
 /// Opaque type representing a hyphenation dictionary loaded from a file,
@@ -536,8 +602,9 @@ pub struct HyphDic;
 ///
 /// Returns null on failure.
 ///
-/// This does not validate that the file actually contains usable hyphenation
-/// data, it only opens the file (read-only) and mmap's it into memory.
+/// This does not fully validate that the file contains usable hyphenation
+/// data, it only opens the file (read-only) and mmap's it into memory, and
+/// does some minimal sanity-checking that it *might* be valid.
 ///
 /// The returned `HyphDic` must be released with `mapped_hyph_free_dictionary`.
 ///
@@ -648,4 +715,15 @@ pub extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len
     let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
     let dic = unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) };
     dic.find_hyphen_values(word_str, hyphen_buf) as i32
+}
+
+/// C-callable function to check if a given memory buffer `dic_buf` of size
+/// `dic_len` is potentially usable as a hyphenation dictionary.
+///
+/// Returns `true` if the given memory buffer looks like it may be a valid
+/// hyphenation dictionary, `false` if it is clearly not usable.
+#[no_mangle]
+pub extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic_len: u32) -> bool {
+    let dic = unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) };
+    dic.is_valid_hyphenator()
 }

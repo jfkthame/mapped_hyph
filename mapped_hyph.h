@@ -100,12 +100,22 @@ int32_t mapped_hyph_find_hyphen_values_raw(const uint8_t *dic_buf,
 void mapped_hyph_free_dictionary(HyphDic *dic);
 
 /**
+ * C-callable function to check if a given memory buffer `dic_buf` of size
+ * `dic_len` is potentially usable as a hyphenation dictionary.
+ *
+ * Returns `true` if the given memory buffer looks like it may be a valid
+ * hyphenation dictionary, `false` if it is clearly not usable.
+ */
+bool mapped_hyph_is_valid_hyphenator(const uint8_t *dic_buf, uint32_t dic_len);
+
+/**
  * C-callable function to load a hyphenation dictionary from a file at `path`.
  *
  * Returns null on failure.
  *
  * This does not validate that the file actually contains usable hyphenation
- * data, it only opens the file (read-only) and mmap's it into memory.
+ * data, it only opens the file (read-only) and mmap's it into memory, and
+ * does some minimal sanity-checking that it *might* be valid.
  *
  * The returned `HyphDic` must be released with `mapped_hyph_free_dictionary`.
  *
