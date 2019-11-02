@@ -13,46 +13,50 @@ fn main() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
+    let hyph = Hyphenator::new(&*dic);
 
-    println!("{}", dic.hyphenate_word("haha", '-'));
-    println!("{}", dic.hyphenate_word("hahaha", '-'));
-    println!("{}", dic.hyphenate_word("photo", '-'));
-    println!("{}", dic.hyphenate_word("photograph", '-'));
-    println!("{}", dic.hyphenate_word("photographer", '-'));
-    println!("{}", dic.hyphenate_word("photographic", '-'));
-    println!("{}", dic.hyphenate_word("photographical", '-'));
-    println!("{}", dic.hyphenate_word("photographically", '-'));
-    println!("{}", dic.hyphenate_word("supercalifragilisticexpialidocious", '-'));
-    println!("{}", dic.hyphenate_word("o'dwyer", '='));
-    println!("{}", dic.hyphenate_word("o'callahan", '='));
-    println!("{}", dic.hyphenate_word("o’dwyer", '='));
-    println!("{}", dic.hyphenate_word("o’callahan", '='));
-    println!("{}", dic.hyphenate_word("petti-fogging", '='));
-    println!("{}", dic.hyphenate_word("e-mailing", '='));
-    println!("{}", dic.hyphenate_word("-x-mailing", '='));
-    println!("{}", dic.hyphenate_word("-strikeout-", '='));
+    println!("{}", hyph.hyphenate_word("haha", '-'));
+    println!("{}", hyph.hyphenate_word("hahaha", '-'));
+    println!("{}", hyph.hyphenate_word("photo", '-'));
+    println!("{}", hyph.hyphenate_word("photograph", '-'));
+    println!("{}", hyph.hyphenate_word("photographer", '-'));
+    println!("{}", hyph.hyphenate_word("photographic", '-'));
+    println!("{}", hyph.hyphenate_word("photographical", '-'));
+    println!("{}", hyph.hyphenate_word("photographically", '-'));
+    println!("{}", hyph.hyphenate_word("supercalifragilisticexpialidocious", '-'));
+    println!("{}", hyph.hyphenate_word("o'dwyer", '='));
+    println!("{}", hyph.hyphenate_word("o'callahan", '='));
+    println!("{}", hyph.hyphenate_word("o’dwyer", '='));
+    println!("{}", hyph.hyphenate_word("o’callahan", '='));
+    println!("{}", hyph.hyphenate_word("petti-fogging", '='));
+    println!("{}", hyph.hyphenate_word("e-mailing", '='));
+    println!("{}", hyph.hyphenate_word("-x-mailing", '='));
+    println!("{}", hyph.hyphenate_word("-strikeout-", '='));
 
     let dic2 = match mapped_hyph::load_file("tests/compound.hyf") {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", "tests/compound.hyf"),
     };
 
-    println!("{}", dic2.hyphenate_word("motorcycle", '='));
+    let h2 = Hyphenator::new(&*dic2);
+    println!("{}", h2.hyphenate_word("motorcycle", '='));
 
     let dic3 = match mapped_hyph::load_file("tests/rhmin.hyf") {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    println!("{}", dic3.hyphenate_word("övéit", '='));
-    println!("{}", dic3.hyphenate_word("అంగడిధర", '='));
+    let h3 = Hyphenator::new(&*dic3);
+    println!("{}", h3.hyphenate_word("övéit", '='));
+    println!("{}", h3.hyphenate_word("అంగడిధర", '='));
 
     let dic4 = match mapped_hyph::load_file("tests/num.hyf") {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", "tests/num.hyf"),
     };
+    let h4 = Hyphenator::new(&*dic4);
 
-    println!("{}", dic4.hyphenate_word("123foobar123", '='));
-    println!("{}", dic4.hyphenate_word("123foobarfoobar", '='));
-    println!("{}", dic4.hyphenate_word("foobarfoobar123", '='));
-    println!("{}", dic4.hyphenate_word("123foobarfoobar123", '='));
+    println!("{}", h4.hyphenate_word("123foobar123", '='));
+    println!("{}", h4.hyphenate_word("123foobarfoobar", '='));
+    println!("{}", h4.hyphenate_word("foobarfoobar123", '='));
+    println!("{}", h4.hyphenate_word("123foobarfoobar123", '='));
 }

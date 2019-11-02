@@ -14,10 +14,11 @@ mod tests {
     #[test]
     fn basic_tests() {
         let dic_path = "hyph_en_US.hyf";
-        let hyph = match mapped_hyph::load_file(dic_path) {
+        let dic = match mapped_hyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
+        let hyph = Hyphenator::new(&*dic);
         assert_eq!(hyph.hyphenate_word("haha", '-'), "haha");
         assert_eq!(hyph.hyphenate_word("hahaha", '-'), "ha-haha");
         assert_eq!(hyph.hyphenate_word("photo", '-'), "photo");
@@ -40,6 +41,7 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
+        let hyph = Hyphenator::new(&*dic);
         use std::fs::File;
         use std::io::{BufRead,BufReader};
         let words: Vec<String> = {
@@ -51,7 +53,7 @@ mod tests {
             BufReader::new(file).lines().map(|l| l.unwrap()).collect()
         };
         for i in 0 .. words.len() {
-            assert_eq!(dic.hyphenate_word(&words[i], '='), hyphs[i]);
+            assert_eq!(hyph.hyphenate_word(&words[i], '='), hyphs[i]);
         }
     }
 
@@ -62,7 +64,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("motorcycle", '-'), "mo-tor-cy-cle");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("motorcycle", '-'), "mo-tor-cy-cle");
     }
 
     #[test]
@@ -72,7 +75,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("motorcycle", '-'), "motor-cycle");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("motorcycle", '-'), "motor-cycle");
     }
 
     #[test]
@@ -82,7 +86,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("postea", '-'), "post-e-a");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("postea", '-'), "post-e-a");
     }
 
     #[test]
@@ -92,7 +97,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("meaque", '-'), "me-a-que");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("meaque", '-'), "me-a-que");
     }
 
     #[test]
@@ -102,7 +108,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("őőőőőőő", '='), "ő=ő=ő=ő=ő=ő=ő");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("őőőőőőő", '='), "ő=ő=ő=ő=ő=ő=ő");
     }
 
     #[test]
@@ -112,7 +119,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("őőőőőőő", '='), "őő=ő=ő=ő=őő");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("őőőőőőő", '='), "őő=ő=ő=ő=őő");
     }
 
     #[test]
@@ -122,7 +130,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("foobar'foobar-foobar’foobar", '='), "foobar'foobar-foobar’foobar");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("foobar'foobar-foobar’foobar", '='), "foobar'foobar-foobar’foobar");
     }
 
     #[test]
@@ -132,7 +141,8 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("miért", '='), "mi=ért");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("miért", '='), "mi=ért");
     }
 
     #[test]
@@ -142,8 +152,9 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("övéit", '='), "övéit");
-        assert_eq!(dic.hyphenate_word("అంగడిధర", '='), "అం=గ=డిధర");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("övéit", '='), "övéit");
+        assert_eq!(hyph.hyphenate_word("అంగడిధర", '='), "అం=గ=డిధర");
     }
 
     #[test]
@@ -153,14 +164,15 @@ mod tests {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
-        assert_eq!(dic.hyphenate_word("foobar", '='), "foobar");
-        assert_eq!(dic.hyphenate_word("foobarfoobar", '='), "foobar=foobar");
-        assert_eq!(dic.hyphenate_word("barfoobarfoo", '='), "barfoo=barfoo");
-        assert_eq!(dic.hyphenate_word("123foobarfoobar", '='), "123foobar=foobar");
-        assert_eq!(dic.hyphenate_word("foobarfoobar123", '='), "foobar=foobar123");
-        assert_eq!(dic.hyphenate_word("123foobarfoobar123", '='), "123foobar=foobar123");
-        assert_eq!(dic.hyphenate_word("123barfoobarfoo", '='), "123barfoo=barfoo");
-        assert_eq!(dic.hyphenate_word("barfoobarfoo123", '='), "barfoo=barfoo123");
-        assert_eq!(dic.hyphenate_word("123barfoobarfoo123", '='), "123barfoo=barfoo123");
+        let hyph = Hyphenator::new(&*dic);
+        assert_eq!(hyph.hyphenate_word("foobar", '='), "foobar");
+        assert_eq!(hyph.hyphenate_word("foobarfoobar", '='), "foobar=foobar");
+        assert_eq!(hyph.hyphenate_word("barfoobarfoo", '='), "barfoo=barfoo");
+        assert_eq!(hyph.hyphenate_word("123foobarfoobar", '='), "123foobar=foobar");
+        assert_eq!(hyph.hyphenate_word("foobarfoobar123", '='), "foobar=foobar123");
+        assert_eq!(hyph.hyphenate_word("123foobarfoobar123", '='), "123foobar=foobar123");
+        assert_eq!(hyph.hyphenate_word("123barfoobarfoo", '='), "123barfoo=barfoo");
+        assert_eq!(hyph.hyphenate_word("barfoobarfoo123", '='), "barfoo=barfoo123");
+        assert_eq!(hyph.hyphenate_word("123barfoobarfoo123", '='), "123barfoo=barfoo123");
     }
 }

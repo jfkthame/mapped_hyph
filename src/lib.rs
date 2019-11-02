@@ -12,7 +12,6 @@ use std::str;
 use std::cmp::max;
 use std::ffi::CStr;
 use std::fs::File;
-use std::ops::Deref;
 use std::os::raw::c_char;
 
 use memmap::Mmap;
@@ -355,41 +354,43 @@ impl Level<'_> {
     }
 }
 
-// Implementation details not exposed in the public API:
-trait HyphenatorImpl {
-    fn magic_number(&self) -> &[u8];
-    fn num_levels(&self) -> u32;
-    fn level(&self, i: u32) -> Level;
-}
+/// Hyphenation engine encapsulating a language-specific set of patterns (rules)
+/// that identify possible break positions within a word.
+pub struct Hyphenator<'a>(&'a [u8]);
 
-impl HyphenatorImpl for &[u8] {
+impl Hyphenator<'_> {
+    /// Return a Hyphenator that wraps the given buffer. This does *not* check
+    /// that the given buffer is in fact a valid hyphenation table. Use
+    /// is_valid_hyphenator() to determine whether it is usable.
+    /// (Calling hyphenation methods on a Hyphenator that wraps arbitrary,
+    /// unvalidated data is not unsafe, but may panic.)
+    pub fn new(buffer: &[u8]) -> Hyphenator {
+        Hyphenator(buffer)
+    }
+
+    // Internal implementation details
     fn magic_number(&self) -> &[u8] {
-        &self[0 .. 4]
+        &self.0[0 .. 4]
     }
     fn num_levels(&self) -> u32 {
-        u32::from_le_bytes(*array_ref!(self, 4, 4))
+        u32::from_le_bytes(*array_ref!(self.0, 4, 4))
     }
     fn level(&self, i: u32) -> Level {
         const FILE_HEADER_SIZE: u32 = 8; // 4-byte magic number, 4-byte count of levels
-        let offset = u32::from_le_bytes(*array_ref!(self, (FILE_HEADER_SIZE + 4 * i) as usize, 4)) as usize;
+        let offset = u32::from_le_bytes(*array_ref!(self.0, (FILE_HEADER_SIZE + 4 * i) as usize, 4)) as usize;
         let limit = if i == self.num_levels() - 1 {
-            self.len()
+            self.0.len()
         } else {
-            u32::from_le_bytes(*array_ref!(self, (FILE_HEADER_SIZE + 4 * i + 4) as usize, 4)) as usize
+            u32::from_le_bytes(*array_ref!(self.0, (FILE_HEADER_SIZE + 4 * i + 4) as usize, 4)) as usize
         };
         Level {
-            data: &self[offset .. limit]
+            data: &self.0[offset .. limit]
         }
     }
-}
 
-/// Hyphenation engine encapsulating a language-specific set of patterns (rules)
-/// that identify possible break positions within a word.
-pub trait Hyphenator {
     /// Identify acceptable hyphenation positions in the given `word`.
     ///
-    /// The caller-supplied `values` must be at least as long as the `word`;
-    /// it will *not* be resized by this function.
+    /// The caller-supplied `values` must be at least as long as the `word`.
     ///
     /// On return, any elements with an odd value indicate positions in the word
     /// after which a hyphen could be inserted.
@@ -398,28 +399,10 @@ pub trait Hyphenator {
     ///
     /// # Panics
     /// If the given `values` slice is too small to hold the results.
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize;
-
-    /// Generate the hyphenated form of a `word` by inserting the given `hyphen_char`
-    /// at each valid break position.
-    fn hyphenate_word(&self, word: &str, hyphen_char: char) -> String;
-
-    /// Check if the given file or block of memory looks like it could be a
-    /// valid hyphenation table.
-    fn is_valid_hyphenator(&self) -> bool;
-}
-
-/// Implementation of the `Hyphenator` trait for a compiled hyphenation file
-/// that is loaded in an arbitrary block of memory.
-impl Hyphenator for &[u8] {
-    /// Identify acceptable hyphenation positions in the given `word`;
-    /// see trait documentation above.
-    ///
-    /// # Panics
-    /// If the block of memory represented by `self` is not in fact a valid
+    /// If the block of memory represented by `self.0` is not in fact a valid
     /// hyphenation dictionary, this function may panic with an overflow or
     /// array bounds violation.
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize {
+    pub fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize {
         assert!(values.len() >= word.len());
         values.iter_mut().for_each(|x| *x = 0);
         let top_level = self.level(0);
@@ -498,7 +481,7 @@ impl Hyphenator for &[u8] {
     /// If the block of memory represented by `self` is not in fact a valid
     /// hyphenation dictionary, this function may panic with an overflow or
     /// array bounds violation.
-    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
+    pub fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
         let mut values = vec![0u8; word.len()];
         let hyph_count = self.find_hyphen_values(word, &mut values);
         let mut result = word.to_string();
@@ -515,10 +498,10 @@ impl Hyphenator for &[u8] {
 
     /// Check if the block of memory looks like it could be a valid hyphenation
     /// table.
-    fn is_valid_hyphenator(&self) -> bool {
+    pub fn is_valid_hyphenator(&self) -> bool {
         // Size must be at least 4 bytes for magic_number + 4 bytes num_levels;
         // smaller than this cannot be safely inspected.
-        if self.len() < 8 {
+        if self.0.len() < 8 {
             return false;
         }
         if self.magic_number() != MAGIC_NUMBER {
@@ -527,7 +510,7 @@ impl Hyphenator for &[u8] {
         // For each level, there's a 4-byte offset in the header, and the level
         // has its own 16-byte header, so we can check a minimum size again here.
         let num_levels = self.num_levels();
-        if self.len() < 8 + 16 * num_levels as usize {
+        if self.0.len() < 8 + 16 * num_levels as usize {
             return false;
         }
         // Check that state_data_base and string_data_base for each hyphenation
@@ -548,37 +531,6 @@ impl Hyphenator for &[u8] {
     }
 }
 
-/// Implementation of the `Hyphenator` trait for a compiled hyphenation file
-/// that is loaded as a memory-mapped file via the `memmap` crate.
-impl Hyphenator for Mmap {
-    /// Identify acceptable hyphenation positions in the given `word`;
-    /// see trait documentation above.
-    ///
-    /// # Panics
-    /// If the memory-mapped file represented by `self` is not in fact a valid
-    /// hyphenation dictionary, this function may panic with an overflow or
-    /// array bounds violation.
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8]) -> isize {
-        self.deref().find_hyphen_values(word, values)
-    }
-
-    /// Generate the hyphenated form of a `word` by inserting the given `hyphen_char`
-    /// at each valid break position.
-    ///
-    /// # Panics
-    /// If the memory-mapped file represented by `self` is not in fact a valid
-    /// hyphenation dictionary, this function may panic with an overflow or
-    /// array bounds violation.
-    fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
-        self.deref().hyphenate_word(word, hyphchar)
-    }
-
-    /// Check if the file looks like it could be a valid hyphenation table.
-    fn is_valid_hyphenator(&self) -> bool {
-        self.deref().is_valid_hyphenator()
-    }
-}
-
 /// Load the compiled hyphenation file at `dic_path`, if present.
 ///
 /// Returns `None` if the specified file cannot be opened or mapped,
@@ -588,7 +540,8 @@ impl Hyphenator for Mmap {
 pub fn load_file(dic_path: &str) -> Option<Mmap> {
     let file = File::open(dic_path).ok()?;
     let dic = unsafe { Mmap::map(&file) }.ok()?;
-    if dic.is_valid_hyphenator() {
+    let hyph = Hyphenator(&*dic);
+    if hyph.is_valid_hyphenator() {
         return Some(dic);
     }
     None
@@ -671,7 +624,8 @@ pub extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
         Err(_) => return -1,
     };
     let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
-    (unsafe { &*(dic as *const Mmap) } ).find_hyphen_values(word_str, hyphen_buf) as i32
+    let hyph = Hyphenator(unsafe { &*(dic as *const Mmap) });
+    hyph.find_hyphen_values(word_str, hyphen_buf) as i32
 }
 
 /// C-callable function to find hyphenation values for a given `word`,
@@ -713,7 +667,7 @@ pub extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len
         Err(_) => return -1,
     };
     let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
-    let dic = unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) };
+    let dic = Hyphenator(unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) });
     dic.find_hyphen_values(word_str, hyphen_buf) as i32
 }
 
@@ -727,6 +681,6 @@ pub extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic_len: u
     if dic_buf == 0 as *const u8 {
         return false;
     }
-    let dic = unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) };
+    let dic = Hyphenator(unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) });
     dic.is_valid_hyphenator()
 }

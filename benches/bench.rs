@@ -20,10 +20,11 @@ lazy_static! {
 fn bench_words(b: &mut test::Bencher) {
     b.iter(|| {
         let dic_path = "hyph_en_US.hyf";
-        let hyph = match mapped_hyph::load_file(dic_path) {
+        let dic = match mapped_hyph::load_file(dic_path) {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
+        let hyph = Hyphenator::new(&*dic);
         let mut values: Vec<u8> = vec![0; 1000];
         for w in WORDS.iter() {
             test::black_box(hyph.find_hyphen_values(&w, &mut values));
