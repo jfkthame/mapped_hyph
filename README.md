@@ -56,10 +56,20 @@ See main.rs for a simple example program.
 
 ## Compiled dictionaries
 
-A tool to compile dictionary files (`*.dic`) as used by libhyphen
-into mapped_hyph's binary format is not yet included.
+The `hyf_compile` tool is used to generate `.hyf` files for mapped_hyph
+from standard `.dic` (or `.pat`) files as used by libhyphen, LibreOffice, etc.
+
+(A compiled version of the `hyph_en_US` dictionary from libhyphen is currently
+included here, as it is handy for testing purposes.)
 
 ## Release Notes
+
+### 0.2.0
+
+* Implemented a hyphenation table compiler in the `builder` submodule,
+  and `hyf_compile` command-line tool.
+
+* Moved C-callable API functions into an `ffi` submodule.
 
 ### 0.1.0
 
