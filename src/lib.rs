@@ -8,19 +8,20 @@ extern crate memmap;
 
 use std::slice;
 use std::str;
-
 use std::cmp::max;
-use std::ffi::CStr;
 use std::fs::File;
-use std::os::raw::c_char;
 
 use memmap::Mmap;
+
+// Make submodules available publicly.
+pub mod builder;
+pub mod ffi;
 
 // 4-byte identification expected at beginning of a compiled dictionary file.
 const MAGIC_NUMBER: [u8; 4] = [b'H', b'y', b'f', b'0'];
 
-const INVALID_STRING_OFFSET: usize = 0xffff;
-const INVALID_STATE_OFFSET: usize = 0xffffff;
+const INVALID_STRING_OFFSET: u16 = 0xffff;
+const INVALID_STATE_OFFSET: u32 = 0xffffff;
 
 // Transition actually holds a 24-bit new state offset and an 8-bit input byte
 // to match. We will be interpreting byte ranges as Transition arrays (in the
@@ -100,7 +101,7 @@ impl State<'_> {
     }
     #[allow(dead_code)]
     fn deep_show(&self, prefix: &str, dic: &Level) {
-        if self.match_string_offset() != INVALID_STRING_OFFSET {
+        if self.match_string_offset() != INVALID_STRING_OFFSET as usize {
             let match_string = dic.string_at_offset(self.match_string_offset());
             println!("{}match: {}", prefix, str::from_utf8(match_string).unwrap());
         }
@@ -176,7 +177,7 @@ impl Level<'_> {
     // This returns a byte slice referencing the string at a given offset,
     // or an empty slice if invalid.
     fn string_at_offset(&self, offset: usize) -> &'_ [u8] {
-        if offset == INVALID_STRING_OFFSET {
+        if offset == INVALID_STRING_OFFSET as usize {
             return &[];
         }
         let string_base = self.string_data_base() as usize + offset;
@@ -202,7 +203,7 @@ impl Level<'_> {
     // States are represented as an offset from the Level's state_data_base.
     // This returns the State at a given offset, or None if invalid.
     fn get_state(&self, offset: usize) -> Option<State> {
-        if offset == INVALID_STATE_OFFSET {
+        if offset == INVALID_STATE_OFFSET as usize {
             return None;
         }
         let state_base = self.state_data_base() + offset;
@@ -241,7 +242,7 @@ impl Level<'_> {
                     st = self.get_state(tr.new_state_offset());
                     if let Some(state) = st {
                         let match_offset = state.match_string_offset();
-                        if match_offset != INVALID_STRING_OFFSET {
+                        if match_offset != INVALID_STRING_OFFSET as usize {
                             if state.is_extended() {
                                 debug_assert!(false, "extended hyphenation not supported by this function");
                             } else {
@@ -540,142 +541,4 @@ pub fn load_file(dic_path: &str) -> Option<Mmap> {
         return Some(dic);
     }
     None
-}
-
-/// Opaque type representing a hyphenation dictionary loaded from a file,
-/// for use in FFI function signatures.
-pub struct HyphDic;
-
-/// C-callable function to load a hyphenation dictionary from a file at `path`.
-///
-/// Returns null on failure.
-///
-/// This does not fully validate that the file contains usable hyphenation
-/// data, it only opens the file (read-only) and mmap's it into memory, and
-/// does some minimal sanity-checking that it *might* be valid.
-///
-/// The returned `HyphDic` must be released with `mapped_hyph_free_dictionary`.
-///
-/// # Safety
-/// The given `path` must be a valid pointer to a NUL-terminated (C-style)
-/// string.
-#[no_mangle]
-pub extern "C" fn mapped_hyph_load_dictionary(path: *const c_char) -> *const HyphDic {
-    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
-        Ok(str) => str,
-        Err(_) => return std::ptr::null(),
-    };
-    let hyph = Box::new(match load_file(path_str) {
-        Some(dic) => dic,
-        _ => return std::ptr::null(),
-    });
-    Box::into_raw(hyph) as *const HyphDic
-}
-
-/// C-callable function to free a hyphenation dictionary
-/// that was loaded by `mapped_hyph_load_dictionary`.
-///
-/// # Safety
-/// The `dic` parameter must be a `HyphDic` pointer obtained from
-/// `mapped_hyph_load_dictionary`, and not previously freed.
-#[no_mangle]
-pub extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
-    unsafe { Box::from_raw(dic) };
-}
-
-/// C-callable function to find hyphenation values for a given `word`,
-/// using a dictionary loaded via `mapped_hyph_load_dictionary`.
-///
-/// The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters)
-/// long.
-///
-/// Caller must supply the `hyphens` output buffer for results; its size is
-/// given in `hyphens_len`.
-/// It should be at least `word_len` elements long.
-///
-/// Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is
-/// too small.
-/// Otherwise returns the number of potential hyphenation positions found.
-///
-/// # Panics
-/// This function may panic if the given dictionary is not valid.
-///
-/// # Safety
-/// The `dic` parameter must be a `HyphDic` pointer obtained from
-/// `mapped_hyph_load_dictionary`.
-///
-/// The `word` and `hyphens` parameter must be valid pointers to memory buffers
-/// of at least the respective sizes `word_len` and `hyphens_len`.
-#[no_mangle]
-pub extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
-                                                     word: *const c_char, word_len: u32,
-                                                     hyphens: *mut u8, hyphens_len: u32) -> i32 {
-    if word_len > hyphens_len {
-        return -1;
-    }
-    let word_str = match str::from_utf8(unsafe {
-            slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
-        Ok(word) => word,
-        Err(_) => return -1,
-    };
-    let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
-    let hyph = Hyphenator(unsafe { &*(dic as *const Mmap) });
-    hyph.find_hyphen_values(word_str, hyphen_buf) as i32
-}
-
-/// C-callable function to find hyphenation values for a given `word`,
-/// using a dictionary loaded and owned by the caller.
-///
-/// The dictionary is supplied as a raw memory buffer `dic_buf` of size
-/// `dic_len`.
-///
-/// The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters)
-/// long.
-///
-/// Caller must supply the `hyphens` output buffer for results; its size is
-/// given in `hyphens_len`.
-/// It should be at least `word_len` elements long.
-///
-/// Returns -1 if `word` is not valid UTF-8, or the output `hyphens` buffer is
-/// too small.
-/// Otherwise returns the number of potential hyphenation positions found.
-///
-/// # Panics
-/// This function may panic if the given dictionary is not valid.
-///
-/// # Safety
-/// The `dic_buf` parameter must be a valid pointer to a memory block of size
-/// at least `dic_len`.
-///
-/// The `word` and `hyphens` parameter must be valid pointers to memory buffers
-/// of at least the respective sizes `word_len` and `hyphens_len`.
-#[no_mangle]
-pub extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
-                                                     word: *const c_char, word_len: u32,
-                                                     hyphens: *mut u8, hyphens_len: u32) -> i32 {
-    if word_len > hyphens_len {
-        return -1;
-    }
-    let word_str = match str::from_utf8(unsafe {
-            slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
-        Ok(word) => word,
-        Err(_) => return -1,
-    };
-    let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
-    let dic = Hyphenator(unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) });
-    dic.find_hyphen_values(word_str, hyphen_buf) as i32
-}
-
-/// C-callable function to check if a given memory buffer `dic_buf` of size
-/// `dic_len` is potentially usable as a hyphenation dictionary.
-///
-/// Returns `true` if the given memory buffer looks like it may be a valid
-/// hyphenation dictionary, `false` if it is clearly not usable.
-#[no_mangle]
-pub extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic_len: u32) -> bool {
-    if dic_buf == 0 as *const u8 {
-        return false;
-    }
-    let dic = Hyphenator(unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) });
-    dic.is_valid_hyphenator()
 }
