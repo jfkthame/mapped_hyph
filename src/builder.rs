@@ -101,8 +101,8 @@ impl LevelBuilder {
 
     fn add_pattern(&mut self, pattern: &str) {
         let mut bytes = pattern.as_bytes();
-        let mut text = vec![];
-        let mut digits = vec![];
+        let mut text = Vec::<u8>::with_capacity(bytes.len());
+        let mut digits = Vec::<u8>::with_capacity(bytes.len() + 1);
         let mut repl_str = None;
         let mut repl_index = 0;
         let mut repl_cut = 0;
@@ -124,8 +124,6 @@ impl LevelBuilder {
         }
 
         // Separate the input pattern into parallel arrays of text (bytes) and digits.
-        text.reserve(bytes.len());
-        digits.reserve(bytes.len() + 1);
         let mut got_digit = false;
         for byte in bytes {
             if *byte <= b'9' && *byte >= b'0' {
@@ -202,8 +200,7 @@ impl LevelBuilder {
             let mut state_to_index = HashMap::<&State,i32>::new();
             // Mapping of old->new state indexes, and whether each old state is
             // a duplicate that should be dropped.
-            let mut mappings = Vec::<(i32,bool)>::new();
-            mappings.reserve(orig_len);
+            let mut mappings = Vec::<(i32,bool)>::with_capacity(orig_len);
             let mut next_new_index: i32 = 0;
             for index in 0 .. self.states.len() {
                 // Find existing index for this state, or allocate the next new index to it.
@@ -241,8 +238,7 @@ impl LevelBuilder {
     fn flatten(&self) -> Vec<u8> {
         // Calculate total space needed for state data, and build the state_to_offset table.
         let mut state_data_size = 0;
-        let mut state_to_offset = vec![];
-        state_to_offset.reserve(self.states.len());
+        let mut state_to_offset = Vec::<usize>::with_capacity(self.states.len());
         for state in &self.states {
             state_to_offset.push(state_data_size);
             state_data_size += if state.repl_string.is_some() { 12 } else { 8 };
@@ -285,9 +281,7 @@ impl LevelBuilder {
             nohyphen_string_offset = get_string_offset_for(&Some(nohyphen_strings.join("\0").as_bytes().to_vec()));
         }
 
-        let mut state_data = vec![];
-        state_data.reserve(state_data_size);
-
+        let mut state_data = Vec::<u8>::with_capacity(state_data_size);
         for state in &self.states {
             state_data.extend(&get_state_offset_for(state.fallback_state).to_le_bytes());
             state_data.extend(&get_string_offset_for(&state.match_string).to_le_bytes());
@@ -323,9 +317,10 @@ impl LevelBuilder {
             string_data.push(0);
         }
 
-        let mut result = vec![];
+        let total_size = super::LEVEL_HEADER_SIZE as usize + state_data_size + string_data.len();
+        let mut result = Vec::<u8>::with_capacity(total_size);
 
-        let state_data_base: u32 = 16;
+        let state_data_base: u32 = super::LEVEL_HEADER_SIZE as u32;
         let string_data_base: u32 = state_data_base + state_data_size as u32;
 
         result.extend(&state_data_base.to_le_bytes());
@@ -340,7 +335,7 @@ impl LevelBuilder {
         result.extend(state_data.iter());
         result.extend(string_data.iter());
 
-        assert_eq!(result.len(), 16 + state_data_size + string_data.len());
+        assert_eq!(result.len(), total_size);
 
         result
     }
@@ -455,14 +450,18 @@ pub fn write_hyf_file<T: Write>(hyf_file: &mut T, levels: Vec<LevelBuilder>) -> 
     for level in levels {
         flattened.push(level.flatten());
     }
+    // Write file header: magic number, count of levels.
     hyf_file.write_all(&[b'H', b'y', b'f', b'0'])?;
     let level_count: u32 = flattened.len() as u32;
     hyf_file.write_all(&level_count.to_le_bytes())?;
-    let mut offset: u32 = 8 + 4 * level_count;
+    // Write array of offsets to each level. First level will begin immediately
+    // after the array of offsets.
+    let mut offset: u32 = super::FILE_HEADER_SIZE as u32 + 4 * level_count;
     for flat in &flattened {
         hyf_file.write_all(&offset.to_le_bytes())?;
         offset += flat.len() as u32;
     }
+    // Write the flattened data for each level.
     for flat in &flattened {
         hyf_file.write_all(&flat)?;
     }

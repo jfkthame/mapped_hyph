@@ -10,6 +10,7 @@ use std::slice;
 use std::str;
 use std::cmp::max;
 use std::fs::File;
+use std::mem::size_of;
 
 use memmap::Mmap;
 
@@ -18,22 +19,32 @@ pub mod builder;
 pub mod ffi;
 
 // 4-byte identification expected at beginning of a compiled dictionary file.
+// (This will be updated if an incompatible change to the format is made in
+// some future revision.)
 const MAGIC_NUMBER: [u8; 4] = [b'H', b'y', b'f', b'0'];
 
 const INVALID_STRING_OFFSET: u16 = 0xffff;
 const INVALID_STATE_OFFSET: u32 = 0xffffff;
 
+const FILE_HEADER_SIZE: usize = 8; // 4-byte magic number, 4-byte count of levels
+const LEVEL_HEADER_SIZE: usize = 16;
+const STATE_HEADER_SIZE_BASIC: usize = 8;
+const STATE_HEADER_SIZE_EXTENDED: usize = 12;
+
 // Transition actually holds a 24-bit new state offset and an 8-bit input byte
 // to match. We will be interpreting byte ranges as Transition arrays (in the
 // State::transitions() method below), so use repr(C) to ensure we have the
 // memory layout we expect.
+// Although it is accessed as individual bytes, the Transition record will
+// always be 4-byte aligned.
 #[repr(C)]
 #[derive(Debug,Copy,Clone)]
 struct Transition(u8, u8, u8, u8);
 
 impl Transition {
     fn new_state_offset(&self) -> usize {
-        self.0 as usize + self.1 as usize * 0x100 + self.2 as usize * 0x10000
+        // Read a 24-bit little-endian number from three bytes.
+        self.0 as usize + ((self.1 as usize) << 8) + ((self.2 as usize) << 16)
     }
     fn match_byte(&self) -> u8 {
         self.3
@@ -47,13 +58,15 @@ impl Transition {
 // hyphenation (no associated spelling change), and an extended version that
 // adds the replacement-string fields to support spelling changes at the
 // hyphenation point. Check is_extended() to know which version is present.
+// State records are always 4-byte aligned, and are each a multiple of 4 bytes
+// long.
 #[derive(Debug,Copy,Clone)]
 struct State<'a> {
     data: &'a [u8],
 }
 
 impl State<'_> {
-    // Accessors for the various State header fields.
+    // Accessors for the various State header fields; see file format description.
     fn fallback_state(&self) -> usize {
         u32::from_le_bytes(*array_ref!(self.data, 0, 4)) as usize
     }
@@ -69,14 +82,17 @@ impl State<'_> {
     // Accessors that are only valid if is_extended() is true.
     #[allow(dead_code)]
     fn repl_string_offset(&self) -> usize {
+        debug_assert!(self.is_extended());
         u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
     }
     #[allow(dead_code)]
     fn repl_index(&self) -> i8 {
+        debug_assert!(self.is_extended());
         self.data[10] as i8
     }
     #[allow(dead_code)]
     fn repl_cut(&self) -> i8 {
+        debug_assert!(self.is_extended());
         self.data[11] as i8
     }
     // Return the state's Transitions as a slice reference.
@@ -85,11 +101,15 @@ impl State<'_> {
         if count == 0 {
             return &[];
         }
-        let transition_offset = if self.is_extended() { 12 } else { 8 };
-        assert_eq!(self.data.len(), transition_offset + count * 4);
+        let transition_offset = if self.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC };
+        assert_eq!(self.data.len(), transition_offset as usize + count * size_of::<Transition>());
         let trans_ptr = &self.data[transition_offset] as *const u8 as *const Transition;
-        // This is OK because we assert above that self.data.len() is large enough
+        // This is safe because we assert above that self.data.len() is large enough
         // to accommodate the expected number of Transitions.
+        // Although Transitions do not assume any particular alignment, in practice
+        // `trans_ptr` will be 4-byte aligned, because State records themselves are all
+        // 4-byte aligned and the state header (either basic or extended) is also a
+        // multiple of 4 bytes.
         unsafe { slice::from_raw_parts(trans_ptr, count) }
     }
     // Look up the Transition for a given input byte, or None.
@@ -99,6 +119,7 @@ impl State<'_> {
         // here gave no benefit (possibly slightly slower).
         self.transitions().iter().copied().find(|t| t.match_byte() == b)
     }
+    // Just for debugging use...
     #[allow(dead_code)]
     fn deep_show(&self, prefix: &str, dic: &Level) {
         if self.match_string_offset() != INVALID_STRING_OFFSET as usize {
@@ -107,11 +128,17 @@ impl State<'_> {
         }
         for t in self.transitions() {
             println!("{}{} ->", prefix, t.match_byte() as char);
-            dic.get_state(t.new_state_offset()).unwrap().deep_show(&(prefix.to_owned() + "  "), &dic);
+            let next_prefix = format!("{}  ", prefix);
+            dic.get_state(t.new_state_offset()).unwrap().deep_show(&next_prefix, &dic);
         }
     }
 }
 
+// We count the presentation-form ligature characters U+FB00..FB06 as multiple
+// chars for the purposes of lefthyphenmin/righthyphenmin. In UTF-8, all these
+// ligature characters are 3-byte sequences beginning with <0xEF, 0xAC>; this
+// helper returns the "decomposed length" of the ligature given its trailing
+// byte.
 fn lig_length(trail_byte: u8) -> usize {
     // This is only called on valid UTF-8 where we already know trail_byte
     // must be >= 0x80.
@@ -128,7 +155,7 @@ fn is_utf8_trail_byte(byte: u8) -> bool {
 }
 
 fn is_ascii_digit(byte: u8) -> bool {
-    byte <= 0x39 && byte >= 0x30
+    byte <= b'9' && byte >= b'0'
 }
 
 fn is_odd(byte: u8) -> bool {
@@ -138,13 +165,15 @@ fn is_odd(byte: u8) -> bool {
 // A hyphenation Level has a header followed by State records and packed string
 // data. The total size of the slice depends on the number and size of the
 // States and Strings it contains.
+// The beginning of each Level is always 4-byte aligned, so that 32-bit fields
+// in the header can safely be read without risking misaligned accesses.
 #[derive(Debug,Copy,Clone)]
 struct Level<'a> {
     data: &'a [u8],
 }
 
 impl Level<'_> {
-    // Accessors for Level header fields.
+    // Accessors for Level header fields; see file format description.
     fn state_data_base(&self) -> usize {
         u32::from_le_bytes(*array_ref!(self.data, 0, 4)) as usize
     }
@@ -181,10 +210,14 @@ impl Level<'_> {
             return &[];
         }
         let string_base = self.string_data_base() as usize + offset;
+        // TODO: move this to the validation function.
+        debug_assert!(string_base + 1 <= self.data.len());
         if string_base + 1 > self.data.len() {
             return &[];
         }
         let len = self.data[string_base] as usize;
+        // TODO: move this to the validation function.
+        debug_assert!(string_base + 1 + len <= self.data.len());
         if string_base + 1 + len > self.data.len() {
             return &[];
         }
@@ -206,14 +239,20 @@ impl Level<'_> {
         if offset == INVALID_STATE_OFFSET as usize {
             return None;
         }
+        debug_assert_eq!(offset & 3, 0);
         let state_base = self.state_data_base() + offset;
-        if state_base + 8 > self.string_data_base() {
+        // TODO: move this to the validation function.
+        debug_assert!(state_base + STATE_HEADER_SIZE_BASIC <= self.string_data_base());
+        if state_base + STATE_HEADER_SIZE_BASIC > self.string_data_base() {
             return None;
         }
         let state_header = State {
-            data: &self.data[state_base .. state_base + 8],
+            data: &self.data[state_base .. state_base + STATE_HEADER_SIZE_BASIC],
         };
-        let length = if state_header.is_extended() { 12 } else { 8 } + 4 * state_header.num_transitions() as usize;
+        let length = if state_header.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC }
+                + size_of::<Transition>() * state_header.num_transitions() as usize;
+        // TODO: move this to the validation function.
+        debug_assert!(state_base + length <= self.string_data_base());
         if state_base + length > self.string_data_base() {
             return None;
         }
@@ -231,14 +270,23 @@ impl Level<'_> {
         let mut st = start_state;
         let mut hyph_count = 0;
         for i in 0 .. word.len() + 2 {
+            // Loop over the word by bytes, with a virtual '.' added at each end
+            // to match word-boundary patterns.
             let b = if i == 0 || i == word.len() + 1 { b'.' } else { word.as_bytes()[i - 1] };
             loop {
+                // Loop to repeatedly fall back if we don't find a matching transition.
+                // Note that this could infinite-loop if there is a state whose fallback
+                // points to itself (or a cycle of fallbacks), but this would represent
+                // a table compilation error.
+                // (A potential validation function could check for fallback cycles.)
                 if st.is_none() {
                     st = start_state;
                     break;
                 }
                 let state = st.unwrap();
                 if let Some(tr) = state.transition_for(b) {
+                    // Found a transition for the current byte. Look up the new state;
+                    // if it has a match_string, merge its weights into `values`.
                     st = self.get_state(tr.new_state_offset());
                     if let Some(state) = st {
                         let match_offset = state.match_string_offset();
@@ -268,8 +316,11 @@ impl Level<'_> {
                             }
                         }
                     }
+                    // We have handled the current input byte; leave the fallback loop
+                    // and get next input.
                     break;
                 }
+                // No transition for the current byte; go to fallback state and try again.
                 st = self.get_state(state.fallback_state());
             }
         }
@@ -280,54 +331,43 @@ impl Level<'_> {
         let mut index = 0;
         let mut count = 0;
         let word_bytes = word.as_bytes();
-        // Handle lh_min
+        let mut clear_hyphen_at = |i| { if is_odd(values[i]) { hyph_count -= 1; } values[i] = 0; };
+        // Handle lh_min.
         while count < lh_min - 1 && index < word_bytes.len() {
             let byte = word_bytes[index];
-            if is_odd(values[index]) {
-                hyph_count -= 1;
-            }
-            values[index] = 0;
+            clear_hyphen_at(index);
             if byte < 0x80 {
                 index += 1;
                 if is_ascii_digit(byte) {
                     continue; // ASCII digits don't count
                 }
-            } else if byte == 0xEF && index + 2 < word_bytes.len() && word_bytes[index + 1] == 0xAC {
+            } else if byte == 0xEF && word_bytes[index + 1] == 0xAC {
+                // Unicode presentation-form ligature characters, which we count as
+                // multiple chars for the purpose of lh_min/rh_min, all begin with
+                // 0xEF, 0xAC in UTF-8.
                 count += lig_length(word_bytes[index + 2]);
-                if is_odd(values[index + 1]) {
-                    hyph_count -= 1;
-                }
-                values[index + 1] = 0;
-                if is_odd(values[index + 2]) {
-                    hyph_count -= 1;
-                }
-                values[index + 2] = 0;
+                clear_hyphen_at(index + 1);
+                clear_hyphen_at(index + 2);
                 index += 3;
                 continue;
             } else {
                 index += 1;
                 while index < word_bytes.len() && is_utf8_trail_byte(word_bytes[index])  {
-                    if is_odd(values[index]) {
-                        hyph_count -= 1;
-                    }
-                    values[index] = 0;
+                    clear_hyphen_at(index);
                     index += 1;
                 }
             }
             count += 1;
         }
 
-        // Handle rh_min
+        // Handle rh_min.
         count = 0;
         index = word.len();
         while count < rh_min && index > 0 {
             index -= 1;
             let byte = word_bytes[index];
             if index < word.len() - 1 {
-                if is_odd(values[index]) {
-                    hyph_count -= 1;
-                }
-                values[index] = 0;
+                clear_hyphen_at(index);
             }
             if byte < 0x80 {
                 // Only count if not an ASCII digit
@@ -340,6 +380,7 @@ impl Level<'_> {
                 continue;
             }
             if byte == 0xEF && word_bytes[index + 1] == 0xAC {
+                // Presentation-form ligatures count as multiple chars.
                 count += lig_length(word_bytes[index + 2]);
                 continue;
             }
@@ -368,17 +409,19 @@ impl Hyphenator<'_> {
     fn magic_number(&self) -> &[u8] {
         &self.0[0 .. 4]
     }
-    fn num_levels(&self) -> u32 {
-        u32::from_le_bytes(*array_ref!(self.0, 4, 4))
+    fn num_levels(&self) -> usize {
+        u32::from_le_bytes(*array_ref!(self.0, 4, 4)) as usize
     }
-    fn level(&self, i: u32) -> Level {
-        const FILE_HEADER_SIZE: u32 = 8; // 4-byte magic number, 4-byte count of levels
-        let offset = u32::from_le_bytes(*array_ref!(self.0, (FILE_HEADER_SIZE + 4 * i) as usize, 4)) as usize;
+    fn level(&self, i: usize) -> Level {
+        let offset = u32::from_le_bytes(*array_ref!(self.0, FILE_HEADER_SIZE + 4 * i, 4)) as usize;
         let limit = if i == self.num_levels() - 1 {
             self.0.len()
         } else {
-            u32::from_le_bytes(*array_ref!(self.0, (FILE_HEADER_SIZE + 4 * i + 4) as usize, 4)) as usize
+            u32::from_le_bytes(*array_ref!(self.0, FILE_HEADER_SIZE + 4 * i + 4, 4)) as usize
         };
+        debug_assert!(offset + LEVEL_HEADER_SIZE <= limit && limit <= self.0.len());
+        debug_assert_eq!(offset & 3, 0);
+        debug_assert_eq!(limit & 3, 0);
         Level {
             data: &self.0[offset .. limit]
         }
@@ -395,6 +438,7 @@ impl Hyphenator<'_> {
     ///
     /// # Panics
     /// If the given `values` slice is too small to hold the results.
+    ///
     /// If the block of memory represented by `self.0` is not in fact a valid
     /// hyphenation dictionary, this function may panic with an overflow or
     /// array bounds violation.
@@ -477,18 +521,27 @@ impl Hyphenator<'_> {
     /// If the block of memory represented by `self` is not in fact a valid
     /// hyphenation dictionary, this function may panic with an overflow or
     /// array bounds violation.
+    ///
+    /// Also panics if the length of the hyphenated word would overflow `usize`.
     pub fn hyphenate_word(&self, word: &str, hyphchar: char) -> String {
         let mut values = vec![0u8; word.len()];
         let hyph_count = self.find_hyphen_values(word, &mut values);
-        let mut result = word.to_string();
+        if hyph_count <= 0 {
+            return word.to_string();
+        }
+        // We know how long the result will be, so we can preallocate here.
+        let result_len = word.len() + hyph_count as usize * hyphchar.len_utf8();
+        let mut result = String::with_capacity(result_len);
         let mut n = 0;
-        for i in (0 .. word.len()).rev() {
-            if is_odd(values[i]) {
-                result.insert(i + 1, hyphchar);
+        for ch in word.char_indices() {
+            if ch.0 > 0 && is_odd(values[ch.0 - 1]) {
+                result.push(hyphchar);
                 n += 1;
             }
+            result.push(ch.1);
         }
         debug_assert_eq!(n, hyph_count);
+        debug_assert_eq!(result_len, result.len());
         result
     }
 
@@ -497,7 +550,7 @@ impl Hyphenator<'_> {
     pub fn is_valid_hyphenator(&self) -> bool {
         // Size must be at least 4 bytes for magic_number + 4 bytes num_levels;
         // smaller than this cannot be safely inspected.
-        if self.0.len() < 8 {
+        if self.0.len() < FILE_HEADER_SIZE {
             return false;
         }
         if self.magic_number() != MAGIC_NUMBER {
@@ -506,14 +559,14 @@ impl Hyphenator<'_> {
         // For each level, there's a 4-byte offset in the header, and the level
         // has its own 16-byte header, so we can check a minimum size again here.
         let num_levels = self.num_levels();
-        if self.0.len() < 8 + 16 * num_levels as usize {
+        if self.0.len() < FILE_HEADER_SIZE + LEVEL_HEADER_SIZE * num_levels {
             return false;
         }
         // Check that state_data_base and string_data_base for each hyphenation
         // level are within range.
         for l in 0 .. num_levels {
             let level = self.level(l);
-            if level.state_data_base() < 16 ||
+            if level.state_data_base() < LEVEL_HEADER_SIZE ||
                    level.state_data_base() > level.string_data_base() ||
                    level.string_data_base() > level.data.len() {
                 return false;

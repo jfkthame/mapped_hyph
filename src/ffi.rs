@@ -6,6 +6,7 @@ use std::slice;
 use std::str;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::str::Utf8Error;
 
 use memmap::Mmap;
 
@@ -14,6 +15,15 @@ use super::Hyphenator;
 /// Opaque type representing a hyphenation dictionary loaded from a file,
 /// for use in FFI function signatures.
 pub struct HyphDic;
+
+// Helper to convert word and hyphen buffer parameters from raw C pointer/length
+// pairs to the Rust types expected by mapped_hyph.
+unsafe fn params_from_c<'a>(word: *const c_char, word_len: u32,
+                            hyphens: *mut u8, hyphens_len: u32) ->
+        (Result<&'a str, Utf8Error>, &'a mut [u8]) {
+    (str::from_utf8(slice::from_raw_parts(word as *const u8, word_len as usize)),
+     slice::from_raw_parts_mut(hyphens, hyphens_len as usize))
+}
 
 /// C-callable function to load a hyphenation dictionary from a file at `path`.
 ///
@@ -29,8 +39,8 @@ pub struct HyphDic;
 /// The given `path` must be a valid pointer to a NUL-terminated (C-style)
 /// string.
 #[no_mangle]
-pub extern "C" fn mapped_hyph_load_dictionary(path: *const c_char) -> *const HyphDic {
-    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+pub unsafe extern "C" fn mapped_hyph_load_dictionary(path: *const c_char) -> *const HyphDic {
+    let path_str = match CStr::from_ptr(path).to_str() {
         Ok(str) => str,
         Err(_) => return std::ptr::null(),
     };
@@ -48,8 +58,8 @@ pub extern "C" fn mapped_hyph_load_dictionary(path: *const c_char) -> *const Hyp
 /// The `dic` parameter must be a `HyphDic` pointer obtained from
 /// `mapped_hyph_load_dictionary`, and not previously freed.
 #[no_mangle]
-pub extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
-    unsafe { Box::from_raw(dic) };
+pub unsafe extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
+    Box::from_raw(dic);
 }
 
 /// C-callable function to find hyphenation values for a given `word`,
@@ -76,20 +86,18 @@ pub extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
 /// The `word` and `hyphens` parameter must be valid pointers to memory buffers
 /// of at least the respective sizes `word_len` and `hyphens_len`.
 #[no_mangle]
-pub extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
-                                                     word: *const c_char, word_len: u32,
-                                                     hyphens: *mut u8, hyphens_len: u32) -> i32 {
+pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
+                                                            word: *const c_char, word_len: u32,
+                                                            hyphens: *mut u8, hyphens_len: u32) -> i32 {
     if word_len > hyphens_len {
         return -1;
     }
-    let word_str = match str::from_utf8(unsafe {
-            slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
-        Ok(word) => word,
-        Err(_) => return -1,
-    };
-    let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
-    let hyph = Hyphenator(unsafe { &*(dic as *const Mmap) });
-    hyph.find_hyphen_values(word_str, hyphen_buf) as i32
+    let (word_str, hyphen_buf) = params_from_c(word, word_len, hyphens, hyphens_len);
+    if word_str.is_err() {
+        return -1;
+    }
+    Hyphenator(&*(dic as *const Mmap))
+        .find_hyphen_values(word_str.unwrap(), hyphen_buf) as i32
 }
 
 /// C-callable function to find hyphenation values for a given `word`,
@@ -119,20 +127,18 @@ pub extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
 /// The `word` and `hyphens` parameter must be valid pointers to memory buffers
 /// of at least the respective sizes `word_len` and `hyphens_len`.
 #[no_mangle]
-pub extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
-                                                     word: *const c_char, word_len: u32,
-                                                     hyphens: *mut u8, hyphens_len: u32) -> i32 {
+pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
+                                                            word: *const c_char, word_len: u32,
+                                                            hyphens: *mut u8, hyphens_len: u32) -> i32 {
     if word_len > hyphens_len {
         return -1;
     }
-    let word_str = match str::from_utf8(unsafe {
-            slice::from_raw_parts(word as *const u8, word_len as usize) } ) {
-        Ok(word) => word,
-        Err(_) => return -1,
-    };
-    let hyphen_buf = unsafe { slice::from_raw_parts_mut(hyphens, hyphens_len as usize) };
-    let dic = Hyphenator(unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) });
-    dic.find_hyphen_values(word_str, hyphen_buf) as i32
+    let (word_str, hyphen_buf) = params_from_c(word, word_len, hyphens, hyphens_len);
+    if word_str.is_err() {
+        return -1;
+    }
+    Hyphenator(slice::from_raw_parts(dic_buf, dic_len as usize))
+        .find_hyphen_values(word_str.unwrap(), hyphen_buf) as i32
 }
 
 /// C-callable function to check if a given memory buffer `dic_buf` of size
@@ -140,11 +146,15 @@ pub extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len
 ///
 /// Returns `true` if the given memory buffer looks like it may be a valid
 /// hyphenation dictionary, `false` if it is clearly not usable.
+///
+/// # Safety
+/// The `dic_buf` parameter must be a valid pointer to a memory block of size
+/// at least `dic_len`.
 #[no_mangle]
-pub extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic_len: u32) -> bool {
-    if dic_buf == 0 as *const u8 {
+pub unsafe extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic_len: u32) -> bool {
+    if dic_buf.is_null() {
         return false;
     }
-    let dic = Hyphenator(unsafe { slice::from_raw_parts(dic_buf, dic_len as usize) });
+    let dic = Hyphenator(slice::from_raw_parts(dic_buf, dic_len as usize));
     dic.is_valid_hyphenator()
 }
