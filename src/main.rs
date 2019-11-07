@@ -9,7 +9,7 @@ use mapped_hyph::Hyphenator;
 fn main() {
     let dic_path = "hyph_en_US.hyf";
 
-    let dic = match mapped_hyph::load_file(dic_path) {
+    let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
@@ -33,7 +33,7 @@ fn main() {
     println!("{}", hyph.hyphenate_word("-x-mailing", '='));
     println!("{}", hyph.hyphenate_word("-strikeout-", '='));
 
-    let dic2 = match mapped_hyph::load_file("tests/compound.hyf") {
+    let dic2 = match unsafe { mapped_hyph::load_file("tests/compound.hyf") } {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", "tests/compound.hyf"),
     };
@@ -41,7 +41,7 @@ fn main() {
     let h2 = Hyphenator::new(&*dic2);
     println!("{}", h2.hyphenate_word("motorcycle", '='));
 
-    let dic3 = match mapped_hyph::load_file("tests/rhmin.hyf") {
+    let dic3 = match unsafe { mapped_hyph::load_file("tests/rhmin.hyf") } {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
@@ -49,7 +49,7 @@ fn main() {
     println!("{}", h3.hyphenate_word("övéit", '='));
     println!("{}", h3.hyphenate_word("అంగడిధర", '='));
 
-    let dic4 = match mapped_hyph::load_file("tests/num.hyf") {
+    let dic4 = match unsafe { mapped_hyph::load_file("tests/num.hyf") } {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", "tests/num.hyf"),
     };

@@ -459,13 +459,14 @@ impl Hyphenator<'_> {
             if hyph_count > 0 {
                 let mut begin = 0;
                 let mut lh = lh_min;
+                // lh_min and rh_min are both guaranteed to be greater than zero,
+                // so this loop will not reach fully to the end of the word.
                 for i in lh_min - 1 .. word.len() - rh_min {
-                    if is_odd(values[i]) || (begin > 0 && i == word.len() - 1) {
+                    if is_odd(values[i]) {
                         if i > begin {
+                            // We've found a component of a compound;
+                            // clear the corresponding values and apply the new level.
                             values[begin .. i].iter_mut().for_each(|x| {
-                                if is_odd(*x) {
-                                    hyph_count -= 1;
-                                }
                                 *x = 0;
                             });
                             hyph_count += level.find_hyphen_values(&word[begin .. i + 1],
@@ -477,8 +478,10 @@ impl Hyphenator<'_> {
                     }
                 }
                 if begin == 0 {
+                    // No compound-word breaks were found, just apply level to the whole word.
                     hyph_count += level.find_hyphen_values(word, values, lh_min, rh_min);
                 } else if begin < word.len() {
+                    // Handle trailing component of compound.
                     hyph_count += level.find_hyphen_values(&word[begin .. word.len()],
                                                            &mut values[begin .. word.len()],
                                                            clh_min, rh_min);
@@ -585,10 +588,17 @@ impl Hyphenator<'_> {
 /// Returns `None` if the specified file cannot be opened or mapped,
 /// otherwise returns a `memmap::Mmap` mapping the file.
 ///
-/// This does *not* check the validity of the file contents!
-pub fn load_file(dic_path: &str) -> Option<Mmap> {
+/// This is unsafe for the same reason Mmap::map() is unsafe:
+/// mapped_hyph does not guarantee safety if the mapped file is modified
+/// (e.g. by another process) while we're using it.
+///
+/// This verifies that the file looks superficially like it may be a
+/// compiled hyphenation table, but does *not* fully check the validity
+/// of the file contents! Calling hyphenation functions with the returned
+/// data is not unsafe, but may panic if the data is invalid.
+pub unsafe fn load_file(dic_path: &str) -> Option<Mmap> {
     let file = File::open(dic_path).ok()?;
-    let dic = unsafe { Mmap::map(&file) }.ok()?;
+    let dic = Mmap::map(&file).ok()?;
     let hyph = Hyphenator(&*dic);
     if hyph.is_valid_hyphenator() {
         return Some(dic);

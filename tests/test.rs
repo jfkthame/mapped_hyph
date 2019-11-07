@@ -14,7 +14,7 @@ mod tests {
     #[test]
     fn basic_tests() {
         let dic_path = "hyph_en_US.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -37,7 +37,7 @@ mod tests {
     #[test]
     fn base() {
         let dic_path = "tests/base.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn compound() {
         let dic_path = "tests/compound.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn compound4() {
         let dic_path = "tests/compound4.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn compound5() {
         let dic_path = "tests/compound5.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn compound6() {
         let dic_path = "tests/compound6.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn settings2() {
         let dic_path = "tests/settings2.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn settings3() {
         let dic_path = "tests/settings3.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn hyphen() {
         let dic_path = "tests/hyphen.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn lhmin() {
         let dic_path = "tests/lhmin.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn rhmin() {
         let dic_path = "tests/rhmin.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn num() {
         let dic_path = "tests/num.hyf";
-        let dic = match mapped_hyph::load_file(dic_path) {
+        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
             Some(dic) => dic,
             _ => panic!("failed to load dictionary {}", dic_path),
         };
