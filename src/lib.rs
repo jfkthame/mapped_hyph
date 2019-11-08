@@ -24,7 +24,7 @@ pub mod ffi;
 const MAGIC_NUMBER: [u8; 4] = [b'H', b'y', b'f', b'0'];
 
 const INVALID_STRING_OFFSET: u16 = 0xffff;
-const INVALID_STATE_OFFSET: u32 = 0xffffff;
+const INVALID_STATE_OFFSET: u32 = 0x00ff_ffff;
 
 const FILE_HEADER_SIZE: usize = 8; // 4-byte magic number, 4-byte count of levels
 const LEVEL_HEADER_SIZE: usize = 16;
@@ -185,7 +185,7 @@ impl Level<'_> {
     // Constructor that initializes our cache variables.
     fn new(data: &[u8]) -> Level {
         Level {
-            data: data,
+            data,
             state_data_base_: u32::from_le_bytes(*array_ref!(data, 0, 4)) as usize,
             string_data_base_: u32::from_le_bytes(*array_ref!(data, 4, 4)) as usize,
         }
@@ -229,7 +229,7 @@ impl Level<'_> {
         }
         let string_base = self.string_data_base() as usize + offset;
         // TODO: move this to the validation function.
-        debug_assert!(string_base + 1 <= self.data.len());
+        debug_assert!(string_base < self.data.len());
         if string_base + 1 > self.data.len() {
             return &[];
         }
@@ -246,7 +246,7 @@ impl Level<'_> {
     fn nohyphen(&self) -> Vec<&[u8]> {
         let string_offset = self.nohyphen_string_offset();
         let nohyph_str = self.string_at_offset(string_offset as usize);
-        if nohyph_str.len() == 0 {
+        if nohyph_str.is_empty() {
             return vec![];
         }
         nohyph_str.split(|&b| b == 0).collect()
@@ -316,13 +316,13 @@ impl Level<'_> {
                                 let match_str = self.string_at_offset(match_offset);
                                 let offset = i + 1 - match_str.len();
                                 assert!(offset + match_str.len() <= word.len() + 2);
-                                for j in 0 .. match_str.len() {
+                                for (j, ch) in match_str.iter().enumerate() {
                                     let index = offset + j;
                                     if index >= lh_min && index <= word.len() - rh_min {
                                         // lh_min and rh_min are guaranteed to be >= 1,
                                         // so this will not try to access outside values[].
                                         let old_value = values[index - 1];
-                                        let value = match_str[j] - b'0';
+                                        let value = ch - b'0';
                                         if value > old_value {
                                             if is_odd(old_value) != is_odd(value) {
                                                 // Adjust hyph_count for the change we're making
@@ -487,8 +487,8 @@ impl Hyphenator<'_> {
                             values[begin .. i].iter_mut().for_each(|x| {
                                 *x = 0;
                             });
-                            hyph_count += level.find_hyphen_values(&word[begin .. i + 1],
-                                                                   &mut values[begin .. i + 1],
+                            hyph_count += level.find_hyphen_values(&word[begin ..= i],
+                                                                   &mut values[begin ..= i],
                                                                    lh, crh_min);
                         }
                         begin = i + 1;
@@ -512,8 +512,8 @@ impl Hyphenator<'_> {
         // Only need to check nohyphen strings if top-level (compound) breaks were found.
         if compound && hyph_count > 0 {
             let nohyph = top_level.nohyphen();
-            if nohyph.len() > 0 {
-                for i in lh_min .. word.len() - rh_min + 1 {
+            if !nohyph.is_empty() {
+                for i in lh_min ..= word.len() - rh_min {
                     if is_odd(values[i - 1]) {
                         for nh in &nohyph {
                             if i + nh.len() <= word.len() && *nh == &word.as_bytes()[i .. i + nh.len()] {
@@ -605,6 +605,8 @@ impl Hyphenator<'_> {
 ///
 /// Returns `None` if the specified file cannot be opened or mapped,
 /// otherwise returns a `memmap::Mmap` mapping the file.
+///
+/// # Safety
 ///
 /// This is unsafe for the same reason Mmap::map() is unsafe:
 /// mapped_hyph does not guarantee safety if the mapped file is modified

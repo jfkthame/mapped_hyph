@@ -90,9 +90,9 @@ impl LevelBuilder {
         result
     }
 
-    fn find_state_number_for(&mut self, text: &Vec<u8>) -> i32 {
+    fn find_state_number_for(&mut self, text: &[u8]) -> i32 {
         let count = self.states.len() as i32;
-        let index = *self.str_to_state.entry(text.clone()).or_insert(count);
+        let index = *self.str_to_state.entry(text.to_vec()).or_insert(count);
         if index == count {
             self.states.push(State::new());
         }
@@ -145,7 +145,7 @@ impl LevelBuilder {
 
         if repl_str.is_none() {
             // Optimize away leading zeroes from the digits array.
-            while digits.len() > 0 && digits[0] == b'0' {
+            while !digits.is_empty() && digits[0] == b'0' {
                 digits.remove(0);
             }
         } else {
@@ -167,7 +167,7 @@ impl LevelBuilder {
         let mut state_num = self.find_state_number_for(&text);
         let mut state = &mut self.states[state_num as usize];
         assert!(state.match_string.is_none(), "duplicate pattern?");
-        if digits.len() > 0 {
+        if !digits.is_empty() {
             state.match_string = Some(digits);
         }
         if repl_str.is_some() {
@@ -177,14 +177,13 @@ impl LevelBuilder {
         }
 
         // Set up prefix transitions, inserting additional states as needed.
-        while text.len() > 0 {
+        while !text.is_empty() {
             let last_state = state_num;
             let ch = *text.last().unwrap();
             text.truncate(text.len() - 1);
             state_num = self.find_state_number_for(&text);
-            let exists = self.states[state_num as usize].transitions.0.insert(ch, last_state);
-            if exists.is_some() {
-                assert_eq!(exists.unwrap(), last_state, "overwriting existing transition?");
+            if let Some(exists) = self.states[state_num as usize].transitions.0.insert(ch, last_state) {
+                assert_eq!(exists, last_state, "overwriting existing transition?");
                 break;
             }
         }
@@ -359,7 +358,7 @@ pub fn read_dic_file<T: Read>(dic_file: T) -> Vec<LevelBuilder> {
             trimmed = trimmed[..i].trim().to_string();
         }
         // Ignore empty lines.
-        if trimmed.len() == 0 {
+        if trimmed.is_empty() {
             continue;
         }
         // Uppercase indicates keyword rather than pattern.
@@ -376,7 +375,7 @@ pub fn read_dic_file<T: Read>(dic_file: T) -> Vec<LevelBuilder> {
                 assert!(parts.len() == 2);
                 let keyword = parts[0];
                 let value = parts[1];
-                match keyword.as_ref() {
+                match keyword {
                     "LEFTHYPHENMIN" => builder.lh_min = value.parse::<u8>().unwrap(),
                     "RIGHTHYPHENMIN" => builder.rh_min = value.parse::<u8>().unwrap(),
                     "COMPOUNDLEFTHYPHENMIN" => builder.clh_min = value.parse::<u8>().unwrap(),
@@ -421,11 +420,11 @@ pub fn read_dic_file<T: Read>(dic_file: T) -> Vec<LevelBuilder> {
     // Put in fallback states in each builder.
     for builder in &mut builders {
         for (key, state_index) in builder.str_to_state.iter() {
-            if key.len() == 0 {
+            if key.is_empty() {
                 continue;
             }
             let mut fallback_key = key.clone();
-            while fallback_key.len() > 0 {
+            while !fallback_key.is_empty() {
                 fallback_key.remove(0);
                 if builder.str_to_state.contains_key(&fallback_key) {
                     break;
