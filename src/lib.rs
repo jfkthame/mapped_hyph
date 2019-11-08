@@ -170,15 +170,27 @@ fn is_odd(byte: u8) -> bool {
 #[derive(Debug,Copy,Clone)]
 struct Level<'a> {
     data: &'a [u8],
+    state_data_base_: usize,
+    string_data_base_: usize,
 }
 
 impl Level<'_> {
+    // Constructor that initializes our cache variables.
+    fn new(data: &[u8]) -> Level {
+        Level {
+            data: data,
+            // Header fields cached by the constructor for faster access:
+            state_data_base_: u32::from_le_bytes(*array_ref!(data, 0, 4)) as usize,
+            string_data_base_: u32::from_le_bytes(*array_ref!(data, 4, 4)) as usize,
+        }
+    }
+
     // Accessors for Level header fields; see file format description.
     fn state_data_base(&self) -> usize {
-        u32::from_le_bytes(*array_ref!(self.data, 0, 4)) as usize
+        self.state_data_base_ // cached by constructor
     }
     fn string_data_base(&self) -> usize {
-        u32::from_le_bytes(*array_ref!(self.data, 4, 4)) as usize
+        self.string_data_base_ // cached by constructor
     }
     fn nohyphen_string_offset(&self) -> usize {
         u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
@@ -427,9 +439,7 @@ impl Hyphenator<'_> {
         debug_assert!(offset + LEVEL_HEADER_SIZE <= limit && limit <= self.0.len());
         debug_assert_eq!(offset & 3, 0);
         debug_assert_eq!(limit & 3, 0);
-        Level {
-            data: &self.0[offset .. limit]
-        }
+        Level::new(&self.0[offset .. limit])
     }
 
     /// Identify acceptable hyphenation positions in the given `word`.

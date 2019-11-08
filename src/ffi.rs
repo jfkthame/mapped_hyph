@@ -96,7 +96,7 @@ pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
     if word_str.is_err() {
         return -1;
     }
-    Hyphenator(&*(dic as *const Mmap))
+    Hyphenator::new(&*(dic as *const Mmap))
         .find_hyphen_values(word_str.unwrap(), hyphen_buf) as i32
 }
 
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, 
     if word_str.is_err() {
         return -1;
     }
-    Hyphenator(slice::from_raw_parts(dic_buf, dic_len as usize))
+    Hyphenator::new(slice::from_raw_parts(dic_buf, dic_len as usize))
         .find_hyphen_values(word_str.unwrap(), hyphen_buf) as i32
 }
 
@@ -158,6 +158,6 @@ pub unsafe extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic
     if dic_buf.is_null() {
         return false;
     }
-    let dic = Hyphenator(slice::from_raw_parts(dic_buf, dic_len as usize));
+    let dic = Hyphenator::new(slice::from_raw_parts(dic_buf, dic_len as usize));
     dic.is_valid_hyphenator()
 }
