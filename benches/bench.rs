@@ -1,33 +1,47 @@
-#![feature(test)]
-extern crate test;
+use criterion::black_box;
+use criterion::criterion_group;
+use criterion::criterion_main;
+use criterion::BenchmarkId;
+use criterion::Criterion;
 
-#[macro_use]
-extern crate lazy_static;
-
-extern crate mapped_hyph;
 use mapped_hyph::Hyphenator;
+use std::fs;
 
-lazy_static! {
-    static ref WORDS: Vec<String> = {
-        use std::fs::File;
-        use std::io::{BufRead,BufReader};
-        let file = File::open("/usr/share/dict/words").unwrap();
-        BufReader::new(file).lines().map(|l| l.unwrap()).collect()
-    };
-}
+const SAMPLE_SIZE: usize = 300;
+const DIC_PATH: &str = "hyph_en_US.hyf";
 
-#[bench]
-fn bench_words(b: &mut test::Bencher) {
-    b.iter(|| {
-        let dic_path = "hyph_en_US.hyf";
-        let dic = match unsafe { mapped_hyph::load_file(dic_path) } {
-            Some(dic) => dic,
-            _ => panic!("failed to load dictionary {}", dic_path),
-        };
-        let hyph = Hyphenator::new(&*dic);
-        let mut values: Vec<u8> = vec![0; 1000];
-        for w in WORDS.iter() {
-            test::black_box(hyph.find_hyphen_values(&w, &mut values));
-        }
+fn bench_construct(c: &mut Criterion) {
+    c.bench_function("construct", |b| {
+        b.iter(|| {
+            let dic = unsafe { mapped_hyph::load_file(DIC_PATH) }
+                .expect(&format!("failed to load dictionary {}", DIC_PATH));
+            let _ = Hyphenator::new(black_box(&*dic));
+        })
     });
 }
+
+fn bench_find_hyphen_values(c: &mut Criterion) {
+    // XXX: Should we copy this file to the crate to ensure reproducability?
+    let data = fs::read_to_string("/usr/share/dict/words").expect("File reading failed.");
+    let words: Vec<&str> = data.lines().take(SAMPLE_SIZE).collect();
+
+    let dic = unsafe { mapped_hyph::load_file(DIC_PATH) }
+        .expect(&format!("failed to load dictionary {}", DIC_PATH));
+    let hyph = Hyphenator::new(&*dic);
+
+    c.bench_with_input(
+        BenchmarkId::new("bench_word", SAMPLE_SIZE),
+        &words,
+        |b, words| {
+            b.iter(|| {
+                let mut values: Vec<u8> = vec![0; 1000];
+                for w in words {
+                    hyph.find_hyphen_values(&w, &mut values);
+                }
+            });
+        },
+    );
+}
+
+criterion_group!(benches, bench_construct, bench_find_hyphen_values,);
+criterion_main!(benches);
