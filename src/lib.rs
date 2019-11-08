@@ -51,49 +51,59 @@ impl Transition {
     }
 }
 
-// State is a reference to a slice of mmap'd data that begins with a fixed
-// header, followed by an array of transitions. Total size of the data slice
-// depends on the number of transitions in the state.
-// There are two versions of State, a basic record that supports only simple
+// State is an area of the Level's data block that begins with a fixed header,
+// followed by an array of transitions. The total size of each State's data
+// depends on the number of transitions in the state. Only the basic header
+// is defined by the struct here; the rest of the state is accessed via
+// pointer magic.
+// There are two versions of State, a basic version that supports only simple
 // hyphenation (no associated spelling change), and an extended version that
 // adds the replacement-string fields to support spelling changes at the
 // hyphenation point. Check is_extended() to know which version is present.
 // State records are always 4-byte aligned, and are each a multiple of 4 bytes
 // long.
 #[derive(Debug,Copy,Clone)]
-struct State<'a> {
-    data: &'a [u8],
+#[repr(C)]
+struct State {
+    fallback_state_: u32,
+    match_string_offset_: u16,
+    num_transitions_: u8,
+    is_extended_: u8,
 }
 
-impl State<'_> {
+impl State {
     // Accessors for the various State header fields; see file format description.
     fn fallback_state(&self) -> usize {
-        u32::from_le_bytes(*array_ref!(self.data, 0, 4)) as usize
+        u32::from_le(self.fallback_state_) as usize
     }
     fn match_string_offset(&self) -> usize {
-        u16::from_le_bytes(*array_ref!(self.data, 4, 2)) as usize
+        u16::from_le(self.match_string_offset_) as usize
     }
     fn num_transitions(&self) -> u8 {
-        self.data[6]
+        self.num_transitions_
     }
     fn is_extended(&self) -> bool {
-        self.data[7] != 0
+        self.is_extended_ != 0
     }
     // Accessors that are only valid if is_extended() is true.
+    // These use `unsafe` to dereference a pointer to the relevant field;
+    // this is OK because Level::get_state always validates the total state size
+    // before returning a state reference, so these pointers will be valid for
+    // any extended state it returns.
     #[allow(dead_code)]
     fn repl_string_offset(&self) -> usize {
         debug_assert!(self.is_extended());
-        u16::from_le_bytes(*array_ref!(self.data, 8, 2)) as usize
+        u16::from_le(unsafe { *((self as *const State as *const u8).offset(8) as *const u16) }) as usize
     }
     #[allow(dead_code)]
     fn repl_index(&self) -> i8 {
         debug_assert!(self.is_extended());
-        self.data[10] as i8
+        unsafe { *((self as *const State as *const i8).offset(10)) }
     }
     #[allow(dead_code)]
     fn repl_cut(&self) -> i8 {
         debug_assert!(self.is_extended());
-        self.data[11] as i8
+        unsafe { *((self as *const State as *const i8).offset(11)) }
     }
     // Return the state's Transitions as a slice reference.
     fn transitions(&self) -> &[Transition] {
@@ -101,16 +111,17 @@ impl State<'_> {
         if count == 0 {
             return &[];
         }
-        let transition_offset = if self.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC };
-        debug_assert_eq!(self.data.len(), transition_offset as usize + count * size_of::<Transition>());
-        let trans_ptr = &self.data[transition_offset] as *const u8 as *const Transition;
-        // We know the slice here will not extend beyond the valid range of memory
+        let transition_offset = if self.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC } as isize;
+        // We know the `offset` here will not look beyond the valid range of memory
         // because Level::get_state() checks the state length (accounting for the
         // number of transitions) before returning a State reference.
+        let trans_ptr = unsafe { (self as *const State as *const u8).offset(transition_offset) as *const Transition };
         // Although Transitions do not assume any particular alignment, in practice
         // `trans_ptr` will be 4-byte aligned, because State records themselves are all
         // 4-byte aligned and the state header (either basic or extended) is also a
         // multiple of 4 bytes.
+        // Again, because Level::get_state() already checked the state length, we know
+        // this slice address and count will be valid.
         unsafe { slice::from_raw_parts(trans_ptr, count) }
     }
     // Look up the Transition for a given input byte, or None.
@@ -247,8 +258,8 @@ impl Level<'_> {
         nohyph_str.split(|&b| b == 0).collect()
     }
     // States are represented as an offset from the Level's state_data_base.
-    // This returns the State at a given offset, or None if invalid.
-    fn get_state(&self, offset: usize) -> Option<State> {
+    // This returns a reference to the State at a given offset, or None if invalid.
+    fn get_state(&self, offset: usize) -> Option<&State> {
         if offset == INVALID_STATE_OFFSET as usize {
             return None;
         }
@@ -259,17 +270,18 @@ impl Level<'_> {
         if state_base + STATE_HEADER_SIZE_BASIC > self.string_data_base() {
             return None;
         }
-        let state_header = State {
-            data: &self.data[state_base .. state_base + STATE_HEADER_SIZE_BASIC],
-        };
-        let length = if state_header.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC }
-                + size_of::<Transition>() * state_header.num_transitions() as usize;
+        let state_ptr = &self.data[state_base] as *const u8 as *const State;
+        // This is safe because we just checked against self.string_data_base() above.
+        let state = unsafe { state_ptr.as_ref().unwrap() };
+        let length = if state.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC }
+                + size_of::<Transition>() * state.num_transitions() as usize;
         // TODO: move this to the validation function.
         debug_assert!(state_base + length <= self.string_data_base());
         if state_base + length > self.string_data_base() {
             return None;
         }
-        Some(State{ data: &self.data[state_base .. state_base + length] })
+        // This is safe because we checked the full state length against self.string_data_base().
+        unsafe { state_ptr.as_ref() }
     }
     // Sets hyphenation values (odd = potential break, even = no break) in values[],
     // and returns the change in the number of odd values present, so the caller can
