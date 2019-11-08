@@ -396,12 +396,17 @@ impl Level<'_> {
 pub struct Hyphenator<'a>(&'a [u8]);
 
 impl Hyphenator<'_> {
-    /// Return a Hyphenator that wraps the given buffer. This does *not* check
-    /// that the given buffer is in fact a valid hyphenation table. Use
-    /// is_valid_hyphenator() to determine whether it is usable.
+    /// Return a Hyphenator that wraps the given buffer.
+    /// The buffer must be 4-byte aligned.
+    /// This does *not* check that the given buffer is in fact a valid hyphenation table.
+    /// Use is_valid_hyphenator() to determine whether it is usable.
     /// (Calling hyphenation methods on a Hyphenator that wraps arbitrary,
     /// unvalidated data is not unsafe, but may panic.)
+    ///
+    /// # Panics
+    /// If the buffer is not aligned to a 4-byte boundary.
     pub fn new(buffer: &[u8]) -> Hyphenator {
+        assert_eq!((&buffer[0] as *const u8).align_offset(4), 0, "misaligned buffer");
         Hyphenator(buffer)
     }
 
@@ -466,6 +471,7 @@ impl Hyphenator<'_> {
                         if i > begin {
                             // We've found a component of a compound;
                             // clear the corresponding values and apply the new level.
+                            // (These values must be even, so hyph_count is unchanged.)
                             values[begin .. i].iter_mut().for_each(|x| {
                                 *x = 0;
                             });
