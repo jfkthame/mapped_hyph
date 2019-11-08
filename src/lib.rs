@@ -35,8 +35,7 @@ const STATE_HEADER_SIZE_EXTENDED: usize = 12;
 // to match. We will be interpreting byte ranges as Transition arrays (in the
 // State::transitions() method below), so use repr(C) to ensure we have the
 // memory layout we expect.
-// Although it is accessed as individual bytes, the Transition record will
-// always be 4-byte aligned.
+// Transition records do not depend on any specific alignment.
 #[repr(C)]
 #[derive(Debug,Copy,Clone)]
 struct Transition(u8, u8, u8, u8);
@@ -60,13 +59,13 @@ impl Transition {
 // hyphenation (no associated spelling change), and an extended version that
 // adds the replacement-string fields to support spelling changes at the
 // hyphenation point. Check is_extended() to know which version is present.
-// State records are always 4-byte aligned, and are each a multiple of 4 bytes
-// long.
+// State records are NOT necessarily 4-byte aligned, so multi-byte fields
+// should be read with care.
 #[derive(Debug,Copy,Clone)]
 #[repr(C)]
 struct State {
-    fallback_state_: u32,
-    match_string_offset_: u16,
+    fallback_state_: [u8; 4],
+    match_string_offset_: [u8; 2],
     num_transitions_: u8,
     is_extended_: u8,
 }
@@ -74,10 +73,10 @@ struct State {
 impl State {
     // Accessors for the various State header fields; see file format description.
     fn fallback_state(&self) -> usize {
-        u32::from_le(self.fallback_state_) as usize
+        u32::from_le_bytes(self.fallback_state_) as usize
     }
     fn match_string_offset(&self) -> usize {
-        u16::from_le(self.match_string_offset_) as usize
+        u16::from_le_bytes(self.match_string_offset_) as usize
     }
     fn num_transitions(&self) -> u8 {
         self.num_transitions_
@@ -116,10 +115,6 @@ impl State {
         // because Level::get_state() checks the state length (accounting for the
         // number of transitions) before returning a State reference.
         let trans_ptr = unsafe { (self as *const State as *const u8).offset(transition_offset) as *const Transition };
-        // Although Transitions do not assume any particular alignment, in practice
-        // `trans_ptr` will be 4-byte aligned, because State records themselves are all
-        // 4-byte aligned and the state header (either basic or extended) is also a
-        // multiple of 4 bytes.
         // Again, because Level::get_state() already checked the state length, we know
         // this slice address and count will be valid.
         unsafe { slice::from_raw_parts(trans_ptr, count) }
@@ -177,8 +172,7 @@ fn is_odd(byte: u8) -> bool {
 // A hyphenation Level has a header followed by State records and packed string
 // data. The total size of the slice depends on the number and size of the
 // States and Strings it contains.
-// The beginning of each Level is always 4-byte aligned, so that 32-bit fields
-// in the header can safely be read without risking misaligned accesses.
+// Note that the data of the Level may not have any specific alignment!
 #[derive(Debug,Copy,Clone)]
 struct Level<'a> {
     data: &'a [u8],
@@ -422,16 +416,11 @@ pub struct Hyphenator<'a>(&'a [u8]);
 
 impl Hyphenator<'_> {
     /// Return a Hyphenator that wraps the given buffer.
-    /// The buffer must be 4-byte aligned.
     /// This does *not* check that the given buffer is in fact a valid hyphenation table.
     /// Use is_valid_hyphenator() to determine whether it is usable.
     /// (Calling hyphenation methods on a Hyphenator that wraps arbitrary,
     /// unvalidated data is not unsafe, but may panic.)
-    ///
-    /// # Panics
-    /// If the buffer is not aligned to a 4-byte boundary.
     pub fn new(buffer: &[u8]) -> Hyphenator {
-        assert_eq!((&buffer[0] as *const u8).align_offset(4), 0, "misaligned buffer");
         Hyphenator(buffer)
     }
 

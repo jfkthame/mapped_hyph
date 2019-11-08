@@ -104,7 +104,7 @@ pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
 /// using a dictionary loaded and owned by the caller.
 ///
 /// The dictionary is supplied as a raw memory buffer `dic_buf` of size
-/// `dic_len`. This buffer must be aligned to a 4-byte boundary.
+/// `dic_len`.
 ///
 /// The `word` must be UTF-8-encoded, and is `word_len` bytes (not characters)
 /// long.
@@ -130,9 +130,6 @@ pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
 pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
                                                             word: *const c_char, word_len: u32,
                                                             hyphens: *mut u8, hyphens_len: u32) -> i32 {
-    if dic_buf.align_offset(4) != 0 {
-        return -1;
-    }
     if word_len > hyphens_len {
         return -1;
     }
