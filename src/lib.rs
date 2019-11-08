@@ -102,10 +102,11 @@ impl State<'_> {
             return &[];
         }
         let transition_offset = if self.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC };
-        assert_eq!(self.data.len(), transition_offset as usize + count * size_of::<Transition>());
+        debug_assert_eq!(self.data.len(), transition_offset as usize + count * size_of::<Transition>());
         let trans_ptr = &self.data[transition_offset] as *const u8 as *const Transition;
-        // This is safe because we assert above that self.data.len() is large enough
-        // to accommodate the expected number of Transitions.
+        // We know the slice here will not extend beyond the valid range of memory
+        // because Level::get_state() checks the state length (accounting for the
+        // number of transitions) before returning a State reference.
         // Although Transitions do not assume any particular alignment, in practice
         // `trans_ptr` will be 4-byte aligned, because State records themselves are all
         // 4-byte aligned and the state header (either basic or extended) is also a
