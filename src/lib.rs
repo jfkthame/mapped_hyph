@@ -170,6 +170,7 @@ fn is_odd(byte: u8) -> bool {
 #[derive(Debug,Copy,Clone)]
 struct Level<'a> {
     data: &'a [u8],
+    // Header fields cached by the constructor for faster access:
     state_data_base_: usize,
     string_data_base_: usize,
 }
@@ -179,7 +180,6 @@ impl Level<'_> {
     fn new(data: &[u8]) -> Level {
         Level {
             data: data,
-            // Header fields cached by the constructor for faster access:
             state_data_base_: u32::from_le_bytes(*array_ref!(data, 0, 4)) as usize,
             string_data_base_: u32::from_le_bytes(*array_ref!(data, 4, 4)) as usize,
         }
