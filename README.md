@@ -36,9 +36,8 @@ will ignore any such hyphenation positions it finds.
 
 ## Licensing
 
-Please see the file named
-[LICENSE](https://github.com/jfkthame/mapped_hyph/blob/master/LICENSE),
-or the [MPL 2.0](https://www.mozilla.org/en-US/MPL/2.0/) license online.
+mapped_hyph is dual licensed under the Apache-2.0 and MIT licenses;
+see the file COPYRIGHT.
 
 ## Documentation
 

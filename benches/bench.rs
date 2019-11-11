@@ -1,3 +1,6 @@
+// Any copyright to the test code below is dedicated to the Public Domain.
+// http://creativecommons.org/publicdomain/zero/1.0/
+
 use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
