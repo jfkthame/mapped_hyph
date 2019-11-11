@@ -10,7 +10,7 @@ use std::slice;
 use std::str;
 use std::cmp::max;
 use std::fs::File;
-use std::mem::size_of;
+use std::mem;
 
 use memmap::Mmap;
 
@@ -28,8 +28,6 @@ const INVALID_STATE_OFFSET: u32 = 0x00ff_ffff;
 
 const FILE_HEADER_SIZE: usize = 8; // 4-byte magic number, 4-byte count of levels
 const LEVEL_HEADER_SIZE: usize = 16;
-const STATE_HEADER_SIZE_BASIC: usize = 8;
-const STATE_HEADER_SIZE_EXTENDED: usize = 12;
 
 // Transition actually holds a 24-bit new state offset and an 8-bit input byte
 // to match. We will be interpreting byte ranges as Transition arrays (in the
@@ -64,25 +62,33 @@ impl Transition {
 #[derive(Debug,Copy,Clone)]
 #[repr(C)]
 struct State {
-    fallback_state_: [u8; 4],
-    match_string_offset_: [u8; 2],
-    num_transitions_: u8,
-    is_extended_: u8,
+    fallback_state: [u8; 4],
+    match_string_offset: [u8; 2],
+    num_transitions: u8,
+    is_extended: u8,
+}
+
+#[repr(C)]
+struct StateExtended {
+    state: State,
+    repl_string_offset: [u8; 2],
+    repl_index: i8,
+    repl_cut: i8,
 }
 
 impl State {
     // Accessors for the various State header fields; see file format description.
     fn fallback_state(&self) -> usize {
-        u32::from_le_bytes(self.fallback_state_) as usize
+        u32::from_le_bytes(self.fallback_state) as usize
     }
     fn match_string_offset(&self) -> usize {
-        u16::from_le_bytes(self.match_string_offset_) as usize
+        u16::from_le_bytes(self.match_string_offset) as usize
     }
     fn num_transitions(&self) -> u8 {
-        self.num_transitions_
+        self.num_transitions
     }
     fn is_extended(&self) -> bool {
-        self.is_extended_ != 0
+        self.is_extended != 0
     }
     // Accessors that are only valid if is_extended() is true.
     // These use `unsafe` to dereference a pointer to the relevant field;
@@ -90,19 +96,21 @@ impl State {
     // before returning a state reference, so these pointers will be valid for
     // any extended state it returns.
     #[allow(dead_code)]
-    fn repl_string_offset(&self) -> usize {
+    fn as_extended(&self) -> &StateExtended {
         debug_assert!(self.is_extended());
-        u16::from_le(unsafe { *((self as *const State as *const u8).offset(8) as *const u16) }) as usize
+        unsafe { mem::transmute(self) }
+    }
+    #[allow(dead_code)]
+    fn repl_string_offset(&self) -> usize {
+        u16::from_le_bytes(self.as_extended().repl_string_offset) as usize
     }
     #[allow(dead_code)]
     fn repl_index(&self) -> i8 {
-        debug_assert!(self.is_extended());
-        unsafe { *((self as *const State as *const i8).offset(10)) }
+        self.as_extended().repl_index
     }
     #[allow(dead_code)]
     fn repl_cut(&self) -> i8 {
-        debug_assert!(self.is_extended());
-        unsafe { *((self as *const State as *const i8).offset(11)) }
+        self.as_extended().repl_cut
     }
     // Return the state's Transitions as a slice reference.
     fn transitions(&self) -> &[Transition] {
@@ -110,7 +118,7 @@ impl State {
         if count == 0 {
             return &[];
         }
-        let transition_offset = if self.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC } as isize;
+        let transition_offset = if self.is_extended() { mem::size_of::<StateExtended>() } else { mem::size_of::<State>() } as isize;
         // We know the `offset` here will not look beyond the valid range of memory
         // because Level::get_state() checks the state length (accounting for the
         // number of transitions) before returning a State reference.
@@ -260,15 +268,15 @@ impl Level<'_> {
         debug_assert_eq!(offset & 3, 0);
         let state_base = self.state_data_base() + offset;
         // TODO: move this to the validation function.
-        debug_assert!(state_base + STATE_HEADER_SIZE_BASIC <= self.string_data_base());
-        if state_base + STATE_HEADER_SIZE_BASIC > self.string_data_base() {
+        debug_assert!(state_base + mem::size_of::<State>() <= self.string_data_base());
+        if state_base + mem::size_of::<State>() > self.string_data_base() {
             return None;
         }
         let state_ptr = &self.data[state_base] as *const u8 as *const State;
         // This is safe because we just checked against self.string_data_base() above.
         let state = unsafe { state_ptr.as_ref().unwrap() };
-        let length = if state.is_extended() { STATE_HEADER_SIZE_EXTENDED } else { STATE_HEADER_SIZE_BASIC }
-                + size_of::<Transition>() * state.num_transitions() as usize;
+        let length = if state.is_extended() { mem::size_of::<StateExtended>() } else { mem::size_of::<State>() }
+                + mem::size_of::<Transition>() * state.num_transitions() as usize;
         // TODO: move this to the validation function.
         debug_assert!(state_base + length <= self.string_data_base());
         if state_base + length > self.string_data_base() {
