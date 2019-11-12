@@ -63,6 +63,12 @@ included here, as it is handy for testing purposes.)
 
 ## Release Notes
 
+### 0.3.0
+
+* Switched from MPL2 to Apache2/MIT dual license.
+
+* Misc bug-fixes and optimizations.
+
 ### 0.2.0
 
 * Implemented a hyphenation table compiler in the `builder` submodule,
