@@ -46,7 +46,7 @@ comments in the source.
 
 ## C and C++ bindings
 
-See the `mapped_hyph.h` header for C/C++ APIs that can be used to load hyphenation files
+See src/ffi.rs for C/C++ APIs that can be used to load hyphenation files
 and to locate valid hyphenation positions in a word.
 
 ## Sample programs
@@ -62,6 +62,15 @@ from standard `.dic` (or `.pat`) files as used by libhyphen, LibreOffice, etc.
 included here, as it is handy for testing purposes.)
 
 ## Release Notes
+
+### 0.4.0
+
+* Added a boolean `compress` param to the pattern compiler to control whether
+  it attempts to compress the compiled table by merging duplicate states (which
+  takes significant extra time).
+
+* Added FFI functions to compile hyphenation tables from a file path or a buffer,
+  intended for use from Gecko.
 
 ### 0.3.0
 
