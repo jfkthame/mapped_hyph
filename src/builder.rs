@@ -133,7 +133,7 @@ impl LevelBuilder {
         for byte in bytes {
             if *byte <= b'9' && *byte >= b'0' {
                 if got_digit {
-                    println!("invalid pattern \"{}\": consecutive digits", pattern);
+                    warn!("invalid pattern \"{}\": consecutive digits", pattern);
                     return;
                 }
                 digits.push(*byte);
@@ -161,7 +161,7 @@ impl LevelBuilder {
             let start = if text[0] == b'.' { 1 } else { 0 };
             if start == 1 {
                 if digits[0] != b'0' {
-                    println!("invalid pattern \"{}\": unexpected digit before start of word", pattern);
+                    warn!("invalid pattern \"{}\": unexpected digit before start of word", pattern);
                     return;
                 }
                 digits.remove(0);
@@ -178,7 +178,7 @@ impl LevelBuilder {
         let mut state_num = self.find_state_number_for(&text);
         let mut state = &mut self.states[state_num as usize];
         if state.match_string.is_some() {
-            println!("duplicate pattern \"{}\" discarded", pattern);
+            warn!("duplicate pattern \"{}\" discarded", pattern);
             return;
         }
         if !digits.is_empty() {
@@ -389,7 +389,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
             if trimmed.contains(' ') {
                 let parts: Vec<&str> = trimmed.split(' ').collect();
                 if parts.len() != 2 {
-                    println!("unrecognized keyword/values: {}", trimmed);
+                    warn!("unrecognized keyword/values: {}", trimmed);
                     continue;
                 }
                 let keyword = parts[0];
@@ -400,7 +400,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
                     "COMPOUNDLEFTHYPHENMIN" => builder.clh_min = value.parse::<u8>().unwrap(),
                     "COMPOUNDRIGHTHYPHENMIN" => builder.crh_min = value.parse::<u8>().unwrap(),
                     "NOHYPHEN" => builder.nohyphen = Some(trimmed),
-                    _ => println!("unknown keyword: {}", trimmed),
+                    _ => warn!("unknown keyword: {}", trimmed),
                 }
                 continue;
             }
@@ -410,13 +410,13 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
                 builder = builders.last_mut().unwrap();
                 continue;
             }
-            println!("unknown keyword: {}", trimmed);
+            warn!("unknown keyword: {}", trimmed);
             continue;
         }
         // Patterns should always be provided in lowercase; complain if not, and discard
         // the bad pattern.
         if trimmed != trimmed.to_lowercase() {
-            println!("pattern \"{}\" not lowercased at line {}", trimmed, index);
+            warn!("pattern \"{}\" not lowercased at line {}", trimmed, index);
             continue;
         }
         builder.add_pattern(&trimmed);
@@ -502,7 +502,7 @@ pub fn compile<T1: Read, T2: Write>(dic_file: T1, hyf_file: &mut T2, compress: b
     match read_dic_file(dic_file, compress) {
         Ok(dic) => write_hyf_file(hyf_file, dic),
         Err(e) => {
-            println!("parse error: {}", e);
+            warn!("parse error: {}", e);
             return Err(Error::from(ErrorKind::InvalidData))
         }
     }
