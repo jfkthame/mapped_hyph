@@ -150,10 +150,11 @@ impl<'a> LevelBuilder<'a> {
             digits.push(b'0');
         }
 
+        let mut digits = &digits[..];
         if repl_str.is_none() {
             // Optimize away leading zeroes from the digits array.
             while !digits.is_empty() && digits[0] == b'0' {
-                digits.remove(0);
+                digits = &digits[1..];
             }
         } else {
             // Convert repl_index and repl_cut from Unicode char to byte indexing.
@@ -166,7 +167,7 @@ impl<'a> LevelBuilder<'a> {
                     );
                     return;
                 }
-                digits.remove(0);
+                digits = &digits[1..];
             }
             let word = std::str::from_utf8(&text[start..]).unwrap();
             let mut chars: Vec<_> = word.char_indices().collect();
@@ -186,7 +187,7 @@ impl<'a> LevelBuilder<'a> {
             return;
         }
         if !digits.is_empty() {
-            state.match_string = Some(self.bump.alloc_slice_copy(&digits));
+            state.match_string = Some(self.bump.alloc_slice_copy(digits));
         }
         if repl_str.is_some() {
             state.repl_string = repl_str;
