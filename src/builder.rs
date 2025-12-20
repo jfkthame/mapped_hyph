@@ -388,10 +388,11 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
     let mut builder = &mut builders[0];
 
     for (index, line) in reader.lines().enumerate() {
-        let mut trimmed = line.unwrap().trim().to_string();
+        let line = line.unwrap();
+        let mut trimmed = line.trim();
         // Strip comments.
         if let Some(i) = trimmed.find('%') {
-            trimmed = trimmed[..i].trim().to_string();
+            trimmed = trimmed[..i].trim();
         }
         // Ignore empty lines.
         if trimmed.is_empty() {
@@ -404,7 +405,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
                 if trimmed != "UTF-8" {
                     return Err("Only UTF-8 patterns are accepted!");
                 };
-                builder.encoding = Some(trimmed);
+                builder.encoding = Some(trimmed.to_string());
                 continue;
             }
             // Check for valid keyword-value pairs.
@@ -421,7 +422,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
                     "RIGHTHYPHENMIN" => builder.rh_min = value.parse::<u8>().unwrap(),
                     "COMPOUNDLEFTHYPHENMIN" => builder.clh_min = value.parse::<u8>().unwrap(),
                     "COMPOUNDRIGHTHYPHENMIN" => builder.crh_min = value.parse::<u8>().unwrap(),
-                    "NOHYPHEN" => builder.nohyphen = Some(trimmed),
+                    "NOHYPHEN" => builder.nohyphen = Some(trimmed.to_string()),
                     _ => warn!("unknown keyword: {}", trimmed),
                 }
                 continue;
@@ -441,7 +442,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
             warn!("pattern \"{}\" not lowercased at line {}", trimmed, index);
             continue;
         }
-        builder.add_pattern(&trimmed);
+        builder.add_pattern(trimmed);
     }
 
     // Create default first (compound-word) level if only one level was provided.
