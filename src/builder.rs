@@ -380,14 +380,20 @@ fn read_dic_file<T: Read>(
     bump: &Bump,
     compress: bool,
 ) -> Result<Vec<LevelBuilder<'_>>, &'static str> {
-    let reader = BufReader::new(dic_file);
+    let mut reader = BufReader::new(dic_file);
 
     let mut builders = Vec::<LevelBuilder>::new();
     builders.push(LevelBuilder::new(bump));
     let mut builder = &mut builders[0];
 
-    for (index, line) in reader.lines().enumerate() {
-        let line = line.unwrap();
+    let mut line = String::new();
+    let mut index = 0;
+    loop {
+        line.clear();
+        index += 1;
+        if reader.read_line(&mut line).unwrap() == 0 {
+            break;
+        }
         let mut trimmed = line.trim();
         // Strip comments.
         if let Some(i) = trimmed.find('%') {
