@@ -281,18 +281,16 @@ impl LevelBuilder {
         // store the bytes into string_data unless using an already-existing string.
         let mut string_to_offset = HashMap::<Vec<u8>, usize>::new();
         let mut string_data = Vec::<u8>::new();
-        let mut get_string_offset_for = |bytes: &Option<Vec<u8>>| -> u16 {
-            if bytes.is_none() {
+        let mut get_string_offset_for = |bytes: Option<&[u8]>| -> u16 {
+            let Some(bytes) = bytes else {
                 return super::INVALID_STRING_OFFSET;
-            }
-            assert!(bytes.as_ref().unwrap().len() < 256);
+            };
+            assert!(bytes.len() < 256);
             let new_offset = string_data.len();
-            let offset = *string_to_offset
-                .entry(bytes.as_ref().unwrap().clone())
-                .or_insert(new_offset);
+            let offset = *string_to_offset.entry(bytes.to_vec()).or_insert(new_offset);
             if offset == new_offset {
-                string_data.push(bytes.as_ref().unwrap().len() as u8);
-                string_data.extend_from_slice(bytes.as_ref().unwrap().as_ref());
+                string_data.push(bytes.len() as u8);
+                string_data.extend_from_slice(bytes.as_ref());
             }
             offset.try_into().unwrap()
         };
@@ -311,13 +309,13 @@ impl LevelBuilder {
                 .collect();
             nohyphen_count = nohyphen_strings.len().try_into().unwrap();
             nohyphen_string_offset =
-                get_string_offset_for(&Some(nohyphen_strings.join("\0").as_bytes().to_vec()));
+                get_string_offset_for(Some(nohyphen_strings.join("\0").as_bytes()));
         }
 
         let mut state_data = Vec::<u8>::with_capacity(state_data_size);
         for state in &self.states {
             state_data.extend(&get_state_offset_for(state.fallback_state).to_le_bytes());
-            state_data.extend(&get_string_offset_for(&state.match_string).to_le_bytes());
+            state_data.extend(&get_string_offset_for(state.match_string.as_deref()).to_le_bytes());
             state_data.push(state.transitions.0.len() as u8);
             // Determine whether to use an extended state record, and if so add the
             // replacement string and index fields.
@@ -325,7 +323,8 @@ impl LevelBuilder {
                 state_data.push(0);
             } else {
                 state_data.push(1);
-                state_data.extend(&get_string_offset_for(&state.repl_string).to_le_bytes());
+                state_data
+                    .extend(&get_string_offset_for(state.repl_string.as_deref()).to_le_bytes());
                 state_data.push(state.repl_index as u8);
                 state_data.push(state.repl_cut as u8);
             }
