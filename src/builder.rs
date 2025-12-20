@@ -438,7 +438,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
         }
         // Patterns should always be provided in lowercase; complain if not, and discard
         // the bad pattern.
-        if trimmed != trimmed.to_lowercase() {
+        if trimmed.chars().any(|c| c.is_uppercase()) {
             warn!("pattern \"{}\" not lowercased at line {}", trimmed, index);
             continue;
         }
