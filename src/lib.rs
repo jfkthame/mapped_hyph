@@ -13,11 +13,11 @@ extern crate memmap2;
 #[macro_use]
 extern crate log;
 
-use std::slice;
-use std::str;
 use std::cmp::max;
 use std::fs::File;
 use std::mem;
+use std::slice;
+use std::str;
 
 use memmap2::Mmap;
 
@@ -42,7 +42,7 @@ const LEVEL_HEADER_SIZE: usize = 16;
 // memory layout we expect.
 // Transition records do not depend on any specific alignment.
 #[repr(C)]
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 struct Transition(u8, u8, u8, u8);
 
 impl Transition {
@@ -66,7 +66,7 @@ impl Transition {
 // hyphenation point. Check is_extended() to know which version is present.
 // State records are NOT necessarily 4-byte aligned, so multi-byte fields
 // should be read with care.
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C)]
 struct State {
     fallback_state: [u8; 4],
@@ -125,11 +125,17 @@ impl State {
         if count == 0 {
             return &[];
         }
-        let transition_offset = if self.is_extended() { mem::size_of::<StateExtended>() } else { mem::size_of::<State>() } as isize;
+        let transition_offset = if self.is_extended() {
+            mem::size_of::<StateExtended>()
+        } else {
+            mem::size_of::<State>()
+        } as isize;
         // We know the `offset` here will not look beyond the valid range of memory
         // because Level::get_state() checks the state length (accounting for the
         // number of transitions) before returning a State reference.
-        let trans_ptr = unsafe { (self as *const State as *const u8).offset(transition_offset) as *const Transition };
+        let trans_ptr = unsafe {
+            (self as *const State as *const u8).offset(transition_offset) as *const Transition
+        };
         // Again, because Level::get_state() already checked the state length, we know
         // this slice address and count will be valid.
         unsafe { slice::from_raw_parts(trans_ptr, count) }
@@ -139,7 +145,10 @@ impl State {
         // The transitions array is sorted by match_byte() value, but there are
         // usually very few entries; benchmarking showed that using binary_search_by
         // here gave no benefit (possibly slightly slower).
-        self.transitions().iter().copied().find(|t| t.match_byte() == b)
+        self.transitions()
+            .iter()
+            .copied()
+            .find(|t| t.match_byte() == b)
     }
     // Just for debugging use...
     #[allow(dead_code)]
@@ -151,7 +160,9 @@ impl State {
         for t in self.transitions() {
             println!("{}{} ->", prefix, t.match_byte() as char);
             let next_prefix = format!("{}  ", prefix);
-            dic.get_state(t.new_state_offset()).unwrap().deep_show(&next_prefix, &dic);
+            dic.get_state(t.new_state_offset())
+                .unwrap()
+                .deep_show(&next_prefix, dic);
         }
     }
 }
@@ -165,7 +176,7 @@ fn lig_length(trail_byte: u8) -> usize {
     // This is only called on valid UTF-8 where we already know trail_byte
     // must be >= 0x80.
     // Ligature lengths:       ff   fi   fl   ffi  ffl  long-st  st
-    const LENGTHS: [u8; 7] = [ 2u8, 2u8, 2u8, 3u8, 3u8, 2u8,     2u8 ];
+    const LENGTHS: [u8; 7] = [2u8, 2u8, 2u8, 3u8, 3u8, 2u8, 2u8];
     if trail_byte > 0x86 {
         return 1;
     }
@@ -176,10 +187,6 @@ fn is_utf8_trail_byte(byte: u8) -> bool {
     (byte & 0xC0) == 0x80
 }
 
-fn is_ascii_digit(byte: u8) -> bool {
-    byte <= b'9' && byte >= b'0'
-}
-
 fn is_odd(byte: u8) -> bool {
     (byte & 0x01) == 0x01
 }
@@ -188,7 +195,7 @@ fn is_odd(byte: u8) -> bool {
 // data. The total size of the slice depends on the number and size of the
 // States and Strings it contains.
 // Note that the data of the Level may not have any specific alignment!
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 struct Level<'a> {
     data: &'a [u8],
     // Header fields cached by the constructor for faster access:
@@ -196,9 +203,9 @@ struct Level<'a> {
     string_data_base_: usize,
 }
 
-impl Level<'_> {
+impl<'a> Level<'a> {
     // Constructor that initializes our cache variables.
-    fn new(data: &[u8]) -> Level {
+    fn new(data: &'a [u8]) -> Self {
         Level {
             data,
             state_data_base_: u32::from_le_bytes(*array_ref!(data, 0, 4)) as usize,
@@ -242,7 +249,7 @@ impl Level<'_> {
         if offset == INVALID_STRING_OFFSET as usize {
             return &[];
         }
-        let string_base = self.string_data_base() as usize + offset;
+        let string_base = self.string_data_base() + offset;
         // TODO: move this to the validation function.
         debug_assert!(string_base < self.data.len());
         if string_base + 1 > self.data.len() {
@@ -254,13 +261,15 @@ impl Level<'_> {
         if string_base + 1 + len > self.data.len() {
             return &[];
         }
-        self.data.get(string_base + 1 .. string_base + 1 + len).unwrap()
+        self.data
+            .get(string_base + 1..string_base + 1 + len)
+            .unwrap()
     }
     // The nohyphen field actually contains multiple NUL-separated substrings;
     // return them as a vector of individual byte slices.
     fn nohyphen(&self) -> Vec<&[u8]> {
         let string_offset = self.nohyphen_string_offset();
-        let nohyph_str = self.string_at_offset(string_offset as usize);
+        let nohyph_str = self.string_at_offset(string_offset);
         if nohyph_str.is_empty() {
             return vec![];
         }
@@ -282,8 +291,11 @@ impl Level<'_> {
         let state_ptr = &self.data[state_base] as *const u8 as *const State;
         // This is safe because we just checked against self.string_data_base() above.
         let state = unsafe { state_ptr.as_ref().unwrap() };
-        let length = if state.is_extended() { mem::size_of::<StateExtended>() } else { mem::size_of::<State>() }
-                + mem::size_of::<Transition>() * state.num_transitions() as usize;
+        let length = if state.is_extended() {
+            mem::size_of::<StateExtended>()
+        } else {
+            mem::size_of::<State>()
+        } + mem::size_of::<Transition>() * state.num_transitions() as usize;
         // TODO: move this to the validation function.
         debug_assert!(state_base + length <= self.string_data_base());
         if state_base + length > self.string_data_base() {
@@ -295,7 +307,13 @@ impl Level<'_> {
     // Sets hyphenation values (odd = potential break, even = no break) in values[],
     // and returns the change in the number of odd values present, so the caller can
     // keep track of the total number of potential breaks in the word.
-    fn find_hyphen_values(&self, word: &str, values: &mut [u8], lh_min: usize, rh_min: usize) -> isize {
+    fn find_hyphen_values(
+        &self,
+        word: &str,
+        values: &mut [u8],
+        lh_min: usize,
+        rh_min: usize,
+    ) -> isize {
         // Bail out immediately if the word is too short to hyphenate.
         if word.len() < lh_min + rh_min {
             return 0;
@@ -303,10 +321,14 @@ impl Level<'_> {
         let start_state = self.get_state(0);
         let mut st = start_state;
         let mut hyph_count = 0;
-        for i in 0 .. word.len() + 2 {
+        for i in 0..word.len() + 2 {
             // Loop over the word by bytes, with a virtual '.' added at each end
             // to match word-boundary patterns.
-            let b = if i == 0 || i == word.len() + 1 { b'.' } else { word.as_bytes()[i - 1] };
+            let b = if i == 0 || i == word.len() + 1 {
+                b'.'
+            } else {
+                word.as_bytes()[i - 1]
+            };
             loop {
                 // Loop to repeatedly fall back if we don't find a matching transition.
                 // Note that this could infinite-loop if there is a state whose fallback
@@ -326,7 +348,10 @@ impl Level<'_> {
                         let match_offset = state.match_string_offset();
                         if match_offset != INVALID_STRING_OFFSET as usize {
                             if state.is_extended() {
-                                debug_assert!(false, "extended hyphenation not supported by this function");
+                                debug_assert!(
+                                    false,
+                                    "extended hyphenation not supported by this function"
+                                );
                             } else {
                                 let match_str = self.string_at_offset(match_offset);
                                 let offset = i + 1 - match_str.len();
@@ -365,14 +390,19 @@ impl Level<'_> {
         let mut index = 0;
         let mut count = 0;
         let word_bytes = word.as_bytes();
-        let mut clear_hyphen_at = |i| { if is_odd(values[i]) { hyph_count -= 1; } values[i] = 0; };
+        let mut clear_hyphen_at = |i| {
+            if is_odd(values[i]) {
+                hyph_count -= 1;
+            }
+            values[i] = 0;
+        };
         // Handle lh_min.
         while count < lh_min - 1 && index < word_bytes.len() {
             let byte = word_bytes[index];
             clear_hyphen_at(index);
             if byte < 0x80 {
                 index += 1;
-                if is_ascii_digit(byte) {
+                if byte.is_ascii_digit() {
                     continue; // ASCII digits don't count
                 }
             } else if byte == 0xEF && word_bytes[index + 1] == 0xAC {
@@ -386,7 +416,7 @@ impl Level<'_> {
                 continue;
             } else {
                 index += 1;
-                while index < word_bytes.len() && is_utf8_trail_byte(word_bytes[index])  {
+                while index < word_bytes.len() && is_utf8_trail_byte(word_bytes[index]) {
                     clear_hyphen_at(index);
                     index += 1;
                 }
@@ -405,7 +435,7 @@ impl Level<'_> {
             }
             if byte < 0x80 {
                 // Only count if not an ASCII digit
-                if !is_ascii_digit(byte) {
+                if !byte.is_ascii_digit() {
                     count += 1;
                 }
                 continue;
@@ -429,24 +459,24 @@ impl Level<'_> {
 /// that identify possible break positions within a word.
 pub struct Hyphenator<'a>(&'a [u8]);
 
-impl Hyphenator<'_> {
+impl<'a> Hyphenator<'a> {
     /// Return a Hyphenator that wraps the given buffer.
     /// This does *not* check that the given buffer is in fact a valid hyphenation table.
     /// Use `is_valid_hyphenator()` to determine whether it is usable.
     /// (Calling hyphenation methods on a Hyphenator that wraps arbitrary,
     /// unvalidated data is not unsafe, but may panic.)
-    pub fn new(buffer: &[u8]) -> Hyphenator {
+    pub fn new(buffer: &'a [u8]) -> Self {
         Hyphenator(buffer)
     }
 
     // Internal implementation details
     fn magic_number(&self) -> &[u8] {
-        &self.0[0 .. 4]
+        &self.0[0..4]
     }
     fn num_levels(&self) -> usize {
         u32::from_le_bytes(*array_ref!(self.0, 4, 4)) as usize
     }
-    fn level(&self, i: usize) -> Level {
+    fn level(&self, i: usize) -> Level<'a> {
         let offset = u32::from_le_bytes(*array_ref!(self.0, FILE_HEADER_SIZE + 4 * i, 4)) as usize;
         let limit = if i == self.num_levels() - 1 {
             self.0.len()
@@ -456,7 +486,7 @@ impl Hyphenator<'_> {
         debug_assert!(offset + LEVEL_HEADER_SIZE <= limit && limit <= self.0.len());
         debug_assert_eq!(offset & 3, 0);
         debug_assert_eq!(limit & 3, 0);
-        Level::new(&self.0[offset .. limit])
+        Level::new(&self.0[offset..limit])
     }
 
     /// Identify acceptable hyphenation positions in the given `word`.
@@ -486,25 +516,28 @@ impl Hyphenator<'_> {
         let compound = hyph_count > 0;
         // Subsequent levels are applied to fragments between potential breaks
         // already found:
-        for l in 1 .. self.num_levels() {
+        for l in 1..self.num_levels() {
             let level = self.level(l);
             if hyph_count > 0 {
                 let mut begin = 0;
                 let mut lh = lh_min;
                 // lh_min and rh_min are both guaranteed to be greater than zero,
                 // so this loop will not reach fully to the end of the word.
-                for i in lh_min - 1 .. word.len() - rh_min {
+                for i in lh_min - 1..word.len() - rh_min {
                     if is_odd(values[i]) {
                         if i > begin {
                             // We've found a component of a compound;
                             // clear the corresponding values and apply the new level.
                             // (These values must be even, so hyph_count is unchanged.)
-                            values[begin .. i].iter_mut().for_each(|x| {
+                            values[begin..i].iter_mut().for_each(|x| {
                                 *x = 0;
                             });
-                            hyph_count += level.find_hyphen_values(&word[begin ..= i],
-                                                                   &mut values[begin ..= i],
-                                                                   lh, crh_min);
+                            hyph_count += level.find_hyphen_values(
+                                &word[begin..=i],
+                                &mut values[begin..=i],
+                                lh,
+                                crh_min,
+                            );
                         }
                         begin = i + 1;
                         lh = clh_min;
@@ -515,9 +548,12 @@ impl Hyphenator<'_> {
                     hyph_count += level.find_hyphen_values(word, values, lh_min, rh_min);
                 } else if begin < word.len() {
                     // Handle trailing component of compound.
-                    hyph_count += level.find_hyphen_values(&word[begin .. word.len()],
-                                                           &mut values[begin .. word.len()],
-                                                           clh_min, rh_min);
+                    hyph_count += level.find_hyphen_values(
+                        &word[begin..word.len()],
+                        &mut values[begin..word.len()],
+                        clh_min,
+                        rh_min,
+                    );
                 }
             } else {
                 hyph_count += level.find_hyphen_values(word, values, lh_min, rh_min);
@@ -528,15 +564,17 @@ impl Hyphenator<'_> {
         if compound && hyph_count > 0 {
             let nohyph = top_level.nohyphen();
             if !nohyph.is_empty() {
-                for i in lh_min ..= word.len() - rh_min {
+                for i in lh_min..=word.len() - rh_min {
                     if is_odd(values[i - 1]) {
                         for nh in &nohyph {
-                            if i + nh.len() <= word.len() && *nh == &word.as_bytes()[i .. i + nh.len()] {
+                            if i + nh.len() <= word.len()
+                                && *nh == &word.as_bytes()[i..i + nh.len()]
+                            {
                                 values[i - 1] = 0;
                                 hyph_count -= 1;
                                 break;
                             }
-                            if nh.len() <= i && *nh == &word.as_bytes()[i - nh.len() .. i] {
+                            if nh.len() <= i && *nh == &word.as_bytes()[i - nh.len()..i] {
                                 values[i - 1] = 0;
                                 hyph_count -= 1;
                                 break;
@@ -600,11 +638,12 @@ impl Hyphenator<'_> {
         }
         // Check that state_data_base and string_data_base for each hyphenation
         // level are within range.
-        for l in 0 .. num_levels {
+        for l in 0..num_levels {
             let level = self.level(l);
-            if level.state_data_base() < LEVEL_HEADER_SIZE ||
-                   level.state_data_base() > level.string_data_base() ||
-                   level.string_data_base() > level.data.len() {
+            if level.state_data_base() < LEVEL_HEADER_SIZE
+                || level.state_data_base() > level.string_data_base()
+                || level.string_data_base() > level.data.len()
+            {
                 return false;
             }
             // TODO: consider doing more extensive validation of states and
@@ -634,7 +673,7 @@ impl Hyphenator<'_> {
 pub unsafe fn load_file(dic_path: &str) -> Option<Mmap> {
     let file = File::open(dic_path).ok()?;
     let dic = Mmap::map(&file).ok()?;
-    let hyph = Hyphenator(&*dic);
+    let hyph = Hyphenator(&dic);
     if hyph.is_valid_hyphenator() {
         return Some(dic);
     }

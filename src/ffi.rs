@@ -7,12 +7,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::slice;
-use std::str;
 use std::ffi::CStr;
 use std::fs::File;
 use std::io::Read;
 use std::os::raw::c_char;
+use std::slice;
+use std::str;
 use std::str::Utf8Error;
 
 use memmap2::Mmap;
@@ -28,11 +28,16 @@ pub struct CompiledData;
 
 // Helper to convert word and hyphen buffer parameters from raw C pointer/length
 // pairs to the Rust types expected by mapped_hyph.
-unsafe fn params_from_c<'a>(word: *const c_char, word_len: u32,
-                            hyphens: *mut u8, hyphens_len: u32) ->
-        (Result<&'a str, Utf8Error>, &'a mut [u8]) {
-    (str::from_utf8(slice::from_raw_parts(word as *const u8, word_len as usize)),
-     slice::from_raw_parts_mut(hyphens, hyphens_len as usize))
+unsafe fn params_from_c<'a>(
+    word: *const c_char,
+    word_len: u32,
+    hyphens: *mut u8,
+    hyphens_len: u32,
+) -> (Result<&'a str, Utf8Error>, &'a mut [u8]) {
+    (
+        str::from_utf8(slice::from_raw_parts(word as *const u8, word_len as usize)),
+        slice::from_raw_parts_mut(hyphens, hyphens_len as usize),
+    )
 }
 
 /// C-callable function to load a hyphenation dictionary from a file at `path`.
@@ -69,7 +74,7 @@ pub unsafe extern "C" fn mapped_hyph_load_dictionary(path: *const c_char) -> *co
 /// `mapped_hyph_load_dictionary`, and not previously freed.
 #[no_mangle]
 pub unsafe extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
-    Box::from_raw(dic);
+    drop(Box::from_raw(dic));
 }
 
 /// C-callable function to find hyphenation values for a given `word`,
@@ -96,9 +101,13 @@ pub unsafe extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
 /// The `word` and `hyphens` parameter must be valid pointers to memory buffers
 /// of at least the respective sizes `word_len` and `hyphens_len`.
 #[no_mangle]
-pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
-                                                            word: *const c_char, word_len: u32,
-                                                            hyphens: *mut u8, hyphens_len: u32) -> i32 {
+pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(
+    dic: *const HyphDic,
+    word: *const c_char,
+    word_len: u32,
+    hyphens: *mut u8,
+    hyphens_len: u32,
+) -> i32 {
     if word_len > hyphens_len {
         return -1;
     }
@@ -106,8 +115,7 @@ pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
     if word_str.is_err() {
         return -1;
     }
-    Hyphenator::new(&*(dic as *const Mmap))
-        .find_hyphen_values(word_str.unwrap(), hyphen_buf) as i32
+    Hyphenator::new(&*(dic as *const Mmap)).find_hyphen_values(word_str.unwrap(), hyphen_buf) as i32
 }
 
 /// C-callable function to find hyphenation values for a given `word`,
@@ -137,9 +145,14 @@ pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_dic(dic: *const HyphDic,
 /// The `word` and `hyphens` parameter must be valid pointers to memory buffers
 /// of at least the respective sizes `word_len` and `hyphens_len`.
 #[no_mangle]
-pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_raw(dic_buf: *const u8, dic_len: u32,
-                                                            word: *const c_char, word_len: u32,
-                                                            hyphens: *mut u8, hyphens_len: u32) -> i32 {
+pub unsafe extern "C" fn mapped_hyph_find_hyphen_values_raw(
+    dic_buf: *const u8,
+    dic_len: u32,
+    word: *const c_char,
+    word_len: u32,
+    hyphens: *mut u8,
+    hyphens_len: u32,
+) -> i32 {
     if word_len > hyphens_len {
         return -1;
     }
@@ -177,7 +190,7 @@ pub unsafe extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic
 /// a `mapped_hyph_compile_...` function, and not previously freed.
 #[no_mangle]
 pub unsafe extern "C" fn mapped_hyph_free_compiled_data(data: *mut CompiledData) {
-    Box::from_raw(data);
+    drop(Box::from_raw(data));
 }
 
 // Helper for the compilation functions (from either memory buffer or file path).
@@ -202,8 +215,15 @@ fn compile_and_wrap<T: Read>(input: T, compress: bool) -> *const CompiledData {
 /// The `pattern_buf` parameter must be a valid pointer to a memory block of size
 /// at least `pattern_len`.
 #[no_mangle]
-pub unsafe extern "C" fn mapped_hyph_compile_buffer(pattern_buf: *const u8, pattern_len: u32, compress: bool) -> *const CompiledData {
-    compile_and_wrap(slice::from_raw_parts(pattern_buf, pattern_len as usize), compress)
+pub unsafe extern "C" fn mapped_hyph_compile_buffer(
+    pattern_buf: *const u8,
+    pattern_len: u32,
+    compress: bool,
+) -> *const CompiledData {
+    compile_and_wrap(
+        slice::from_raw_parts(pattern_buf, pattern_len as usize),
+        compress,
+    )
 }
 
 /// C-callable function to compile hyphenation patterns from a file to a memory buffer.
@@ -213,7 +233,10 @@ pub unsafe extern "C" fn mapped_hyph_compile_buffer(pattern_buf: *const u8, patt
 /// # Safety
 /// The given `path` must be a valid pointer to a NUL-terminated (C-style) string.
 #[no_mangle]
-pub unsafe extern "C" fn mapped_hyph_compile_file(path: *const c_char, compress: bool) -> *const CompiledData {
+pub unsafe extern "C" fn mapped_hyph_compile_file(
+    path: *const c_char,
+    compress: bool,
+) -> *const CompiledData {
     // Try to open the file at the given path, returning null on failure.
     let path_str = match CStr::from_ptr(path).to_str() {
         Ok(str) => str,
