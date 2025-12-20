@@ -13,6 +13,7 @@
 use std::convert::TryInto;
 use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
 
+use bumpalo::Bump;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -37,17 +38,17 @@ impl TransitionMap {
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-struct State {
-    match_string: Option<Vec<u8>>,
-    repl_string: Option<Vec<u8>>,
+struct State<'a> {
+    match_string: Option<&'a [u8]>,
+    repl_string: Option<&'a [u8]>,
     repl_index: i32,
     repl_cut: i32,
     fallback_state: i32,
     transitions: TransitionMap,
 }
 
-impl State {
-    fn new() -> State {
+impl<'a> State<'a> {
+    fn new() -> Self {
         State {
             match_string: None,
             repl_string: None,
@@ -62,9 +63,10 @@ impl State {
 /// Structures returned by the read_dic_file() function;
 /// array of these can then be passed to write_hyf_file()
 /// to create the flattened output.
-struct LevelBuilder {
-    states: Vec<State>,
-    str_to_state: FxHashMap<Vec<u8>, i32>,
+struct LevelBuilder<'a> {
+    bump: &'a Bump,
+    states: Vec<State<'a>>,
+    str_to_state: FxHashMap<&'a [u8], i32>,
     encoding: Option<String>,
     nohyphen: Option<String>,
     lh_min: u8,
@@ -73,11 +75,12 @@ struct LevelBuilder {
     crh_min: u8,
 }
 
-impl LevelBuilder {
-    fn new() -> LevelBuilder {
-        let mut result = LevelBuilder {
+impl<'a> LevelBuilder<'a> {
+    fn new(bump: &'a Bump) -> Self {
+        let mut result = Self {
+            bump,
             states: Vec::<State>::new(),
-            str_to_state: FxHashMap::<Vec<u8>, i32>::default(),
+            str_to_state: FxHashMap::default(),
             encoding: None,
             nohyphen: None,
             lh_min: 0,
@@ -86,14 +89,14 @@ impl LevelBuilder {
             crh_min: 0,
         };
         // Initialize the builder with an empty start state.
-        result.str_to_state.insert(vec![], 0);
+        result.str_to_state.insert(&[], 0);
         result.states.push(State::new());
         result
     }
 
-    fn find_state_number_for(&mut self, text: &[u8]) -> i32 {
+    fn find_state_number_for(&mut self, text: &'a [u8]) -> i32 {
         let count = self.states.len() as i32;
-        let index = *self.str_to_state.entry(text.to_vec()).or_insert(count);
+        let index = *self.str_to_state.entry(text).or_insert(count);
         if index == count {
             self.states.push(State::new());
         }
@@ -104,17 +107,17 @@ impl LevelBuilder {
         let mut bytes = pattern.as_bytes();
         let mut text = SmallVec::<[u8; 20]>::with_capacity(bytes.len());
         let mut digits = SmallVec::<[u8; 20]>::with_capacity(bytes.len() + 1);
-        let mut repl_str = None;
+        let mut repl_str: Option<&[u8]> = None;
         let mut repl_index = 0;
         let mut repl_cut = 0;
 
         // Check for replacement rule (non-standard hyphenation spelling change).
         if let Some(slash) = bytes.iter().position(|x| *x == b'/') {
-            let parts = bytes.split_at(slash);
-            bytes = parts.0;
-            let mut it = parts.1[1..].split(|x| *x == b',');
+            let (before_slash, slash_and_after) = bytes.split_at(slash);
+            bytes = before_slash;
+            let mut it = slash_and_after[1..].split(|x| *x == b',');
             if let Some(repl) = it.next() {
-                repl_str = Some(repl.to_vec());
+                repl_str = Some(self.bump.alloc_slice_copy(repl));
             }
             if let Some(num) = it.next() {
                 repl_index = std::str::from_utf8(num).unwrap().parse::<i32>().unwrap() - 1;
@@ -175,14 +178,15 @@ impl LevelBuilder {
 
         // Create the new state, or add pattern into an existing state
         // (which should not already have a match_string).
-        let mut state_num = self.find_state_number_for(&text);
+        let mut text: &[u8] = self.bump.alloc_slice_copy(&text);
+        let mut state_num = self.find_state_number_for(text);
         let state = &mut self.states[state_num as usize];
         if state.match_string.is_some() {
             warn!("duplicate pattern \"{}\" discarded", pattern);
             return;
         }
         if !digits.is_empty() {
-            state.match_string = Some(digits.to_vec());
+            state.match_string = Some(self.bump.alloc_slice_copy(&digits));
         }
         if repl_str.is_some() {
             state.repl_string = repl_str;
@@ -191,14 +195,13 @@ impl LevelBuilder {
         }
 
         // Set up prefix transitions, inserting additional states as needed.
-        while !text.is_empty() {
+        while let Some((ch, trunc_text)) = text.split_last() {
             let last_state = state_num;
-            let ch = *text.last().unwrap();
-            text.truncate(text.len() - 1);
-            state_num = self.find_state_number_for(&text);
+            text = trunc_text;
+            state_num = self.find_state_number_for(text);
             if let Some(exists) = self.states[state_num as usize]
                 .transitions
-                .insert(ch, last_state)
+                .insert(*ch, last_state)
             {
                 assert_eq!(
                     exists, last_state,
@@ -277,15 +280,15 @@ impl LevelBuilder {
 
         // Helper to map a byte string to its offset in the final data block, and
         // store the bytes into string_data unless using an already-existing string.
-        let mut string_to_offset = FxHashMap::<Vec<u8>, usize>::default();
+        let mut string_to_offset = FxHashMap::<&'a [u8], usize>::default();
         let mut string_data = Vec::<u8>::new();
-        let mut get_string_offset_for = |bytes: Option<&[u8]>| -> u16 {
+        let mut get_string_offset_for = |bytes: Option<&'a [u8]>| -> u16 {
             let Some(bytes) = bytes else {
                 return super::INVALID_STRING_OFFSET;
             };
             assert!(bytes.len() < 256);
             let new_offset = string_data.len();
-            let offset = *string_to_offset.entry(bytes.to_vec()).or_insert(new_offset);
+            let offset = *string_to_offset.entry(bytes).or_insert(new_offset);
             if offset == new_offset {
                 string_data.push(bytes.len() as u8);
                 string_data.extend_from_slice(bytes.as_ref());
@@ -306,16 +309,15 @@ impl LevelBuilder {
                 .map(|x| x.trim())
                 .collect();
             nohyphen_count = nohyphen_strings.len().try_into().unwrap();
-            nohyphen_string_offset =
-                get_string_offset_for(Some(nohyphen_strings.join("\0").as_bytes()));
+            let nohyphen_string = nohyphen_strings.join("\0");
+            let no_hyphen_str = self.bump.alloc_slice_copy(nohyphen_string.as_bytes());
+            nohyphen_string_offset = get_string_offset_for(Some(no_hyphen_str));
         }
 
         let mut state_data = Vec::<u8>::with_capacity(state_data_size);
         for state in &self.states {
             state_data.extend_from_slice(&get_state_offset_for(state.fallback_state).to_le_bytes());
-            state_data.extend_from_slice(
-                &get_string_offset_for(state.match_string.as_deref()).to_le_bytes(),
-            );
+            state_data.extend_from_slice(&get_string_offset_for(state.match_string).to_le_bytes());
             state_data.push(state.transitions.0.len() as u8);
             // Determine whether to use an extended state record, and if so add the
             // replacement string and index fields.
@@ -323,9 +325,8 @@ impl LevelBuilder {
                 state_data.push(0);
             } else {
                 state_data.push(1);
-                state_data.extend_from_slice(
-                    &get_string_offset_for(state.repl_string.as_deref()).to_le_bytes(),
-                );
+                state_data
+                    .extend_from_slice(&get_string_offset_for(state.repl_string).to_le_bytes());
                 state_data.push(state.repl_index as u8);
                 state_data.push(state.repl_cut as u8);
             }
@@ -374,11 +375,15 @@ impl LevelBuilder {
 /// machine transitions, etc.
 /// The returned Vec can be passed to write_hyf_file() to generate a flattened
 /// representation of the state machine in mapped_hyph's binary format.
-fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilder>, &'static str> {
+fn read_dic_file<T: Read>(
+    dic_file: T,
+    bump: &Bump,
+    compress: bool,
+) -> Result<Vec<LevelBuilder<'_>>, &'static str> {
     let reader = BufReader::new(dic_file);
 
     let mut builders = Vec::<LevelBuilder>::new();
-    builders.push(LevelBuilder::new());
+    builders.push(LevelBuilder::new(bump));
     let mut builder = &mut builders[0];
 
     for (index, line) in reader.lines().enumerate() {
@@ -423,7 +428,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
             }
             // Start a new hyphenation level?
             if trimmed == "NEXTLEVEL" {
-                builders.push(LevelBuilder::new());
+                builders.push(LevelBuilder::new(bump));
                 builder = builders.last_mut().unwrap();
                 continue;
             }
@@ -448,7 +453,7 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
             builders[0].clh_min,
             builders[0].crh_min,
         );
-        builders.insert(0, LevelBuilder::new());
+        builders.insert(0, LevelBuilder::new(bump));
         builder = builders.first_mut().unwrap();
         builder.add_pattern("1-1");
         builder.add_pattern("1'1");
@@ -537,7 +542,8 @@ pub fn compile<T1: Read, T2: Write>(
     hyf_file: &mut T2,
     compress: bool,
 ) -> std::io::Result<()> {
-    match read_dic_file(dic_file, compress) {
+    let bump = Bump::new();
+    match read_dic_file(dic_file, &bump, compress) {
         Ok(dic) => write_hyf_file(hyf_file, dic),
         Err(e) => {
             warn!("parse error: {}", e);
