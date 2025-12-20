@@ -15,6 +15,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
 
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 // Wrap a FxHashMap so that we can implement the Hash trait.
 #[derive(PartialEq, Eq, Clone)]
@@ -104,8 +105,8 @@ impl LevelBuilder {
 
     fn add_pattern(&mut self, pattern: &str) {
         let mut bytes = pattern.as_bytes();
-        let mut text = Vec::<u8>::with_capacity(bytes.len());
-        let mut digits = Vec::<u8>::with_capacity(bytes.len() + 1);
+        let mut text = SmallVec::<[u8; 20]>::with_capacity(bytes.len());
+        let mut digits = SmallVec::<[u8; 20]>::with_capacity(bytes.len() + 1);
         let mut repl_str = None;
         let mut repl_index = 0;
         let mut repl_cut = 0;
@@ -184,7 +185,7 @@ impl LevelBuilder {
             return;
         }
         if !digits.is_empty() {
-            state.match_string = Some(digits);
+            state.match_string = Some(digits.to_vec());
         }
         if repl_str.is_some() {
             state.repl_string = repl_str;
