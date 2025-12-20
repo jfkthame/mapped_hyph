@@ -40,11 +40,8 @@ impl Hash for TransitionMap {
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct State {
     match_string: Option<Vec<u8>>,
-    #[allow(dead_code)]
     repl_string: Option<Vec<u8>>,
-    #[allow(dead_code)]
     repl_index: i32,
-    #[allow(dead_code)]
     repl_cut: i32,
     fallback_state: i32,
     transitions: TransitionMap,
