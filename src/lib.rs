@@ -187,10 +187,6 @@ fn is_utf8_trail_byte(byte: u8) -> bool {
     (byte & 0xC0) == 0x80
 }
 
-fn is_ascii_digit(byte: u8) -> bool {
-    (b'0'..=b'9').contains(&byte)
-}
-
 fn is_odd(byte: u8) -> bool {
     (byte & 0x01) == 0x01
 }
@@ -406,7 +402,7 @@ impl<'a> Level<'a> {
             clear_hyphen_at(index);
             if byte < 0x80 {
                 index += 1;
-                if is_ascii_digit(byte) {
+                if byte.is_ascii_digit() {
                     continue; // ASCII digits don't count
                 }
             } else if byte == 0xEF && word_bytes[index + 1] == 0xAC {
@@ -439,7 +435,7 @@ impl<'a> Level<'a> {
             }
             if byte < 0x80 {
                 // Only count if not an ASCII digit
-                if !is_ascii_digit(byte) {
+                if !byte.is_ascii_digit() {
                     count += 1;
                 }
                 continue;
