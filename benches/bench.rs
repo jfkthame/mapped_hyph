@@ -17,7 +17,7 @@ fn bench_construct(c: &mut Criterion) {
     c.bench_function("construct", |b| {
         b.iter(|| {
             let dic = unsafe { mapped_hyph::load_file(DIC_PATH) }
-                .expect(&format!("failed to load dictionary {}", DIC_PATH));
+                .unwrap_or_else(|| panic!("failed to load dictionary {}", DIC_PATH));
             let _ = Hyphenator::new(black_box(&*dic));
         })
     });
@@ -29,8 +29,8 @@ fn bench_find_hyphen_values(c: &mut Criterion) {
     let words: Vec<&str> = data.lines().take(SAMPLE_SIZE).collect();
 
     let dic = unsafe { mapped_hyph::load_file(DIC_PATH) }
-        .expect(&format!("failed to load dictionary {}", DIC_PATH));
-    let hyph = Hyphenator::new(&*dic);
+        .unwrap_or_else(|| panic!("failed to load dictionary {}", DIC_PATH));
+    let hyph = Hyphenator::new(&dic);
 
     c.bench_with_input(
         BenchmarkId::new("bench_word", SAMPLE_SIZE),
@@ -39,7 +39,7 @@ fn bench_find_hyphen_values(c: &mut Criterion) {
             b.iter(|| {
                 let mut values: Vec<u8> = vec![0; 1000];
                 for w in words {
-                    hyph.find_hyphen_values(&w, &mut values);
+                    hyph.find_hyphen_values(w, &mut values);
                 }
             });
         },
