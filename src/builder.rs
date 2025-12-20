@@ -7,21 +7,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-/// Functions to compile human-readable patterns into a mapped_hyph
-/// flattened representation of the hyphenation state machine.
+//! Functions to compile human-readable patterns into a mapped_hyph
+//! flattened representation of the hyphenation state machine.
 
-use std::io::{Read,BufRead,BufReader,Write,Error,ErrorKind};
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::hash::{Hash,Hasher};
+use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
 
 // Wrap a HashMap so that we can implement the Hash trait.
 #[derive(PartialEq, Eq, Clone)]
-struct TransitionMap (HashMap<u8,i32>);
+struct TransitionMap(HashMap<u8, i32>);
 
 impl TransitionMap {
     fn new() -> TransitionMap {
-        TransitionMap(HashMap::<u8,i32>::new())
+        TransitionMap(HashMap::<u8, i32>::new())
     }
 }
 
@@ -68,7 +68,7 @@ impl State {
 /// to create the flattened output.
 struct LevelBuilder {
     states: Vec<State>,
-    str_to_state: HashMap<Vec<u8>,i32>,
+    str_to_state: HashMap<Vec<u8>, i32>,
     encoding: Option<String>,
     nohyphen: Option<String>,
     lh_min: u8,
@@ -81,7 +81,7 @@ impl LevelBuilder {
     fn new() -> LevelBuilder {
         let mut result = LevelBuilder {
             states: Vec::<State>::new(),
-            str_to_state: HashMap::<Vec<u8>,i32>::new(),
+            str_to_state: HashMap::<Vec<u8>, i32>::new(),
             encoding: None,
             nohyphen: None,
             lh_min: 0,
@@ -116,7 +116,7 @@ impl LevelBuilder {
         if let Some(slash) = bytes.iter().position(|x| *x == b'/') {
             let parts = bytes.split_at(slash);
             bytes = parts.0;
-            let mut it = parts.1[1 ..].split(|x| *x == b',');
+            let mut it = parts.1[1..].split(|x| *x == b',');
             if let Some(repl) = it.next() {
                 repl_str = Some(repl.to_vec());
             }
@@ -161,7 +161,10 @@ impl LevelBuilder {
             let start = if text[0] == b'.' { 1 } else { 0 };
             if start == 1 {
                 if digits[0] != b'0' {
-                    warn!("invalid pattern \"{}\": unexpected digit before start of word", pattern);
+                    warn!(
+                        "invalid pattern \"{}\": unexpected digit before start of word",
+                        pattern
+                    );
                     return;
                 }
                 digits.remove(0);
@@ -169,7 +172,8 @@ impl LevelBuilder {
             let word = std::str::from_utf8(&text[start..]).unwrap();
             let mut chars: Vec<_> = word.char_indices().collect();
             chars.push((word.len(), '.'));
-            repl_cut = chars[(repl_index + repl_cut) as usize].0 as i32 - chars[repl_index as usize].0 as i32;
+            repl_cut = chars[(repl_index + repl_cut) as usize].0 as i32
+                - chars[repl_index as usize].0 as i32;
             repl_index = chars[repl_index as usize].0 as i32;
         }
 
@@ -196,8 +200,16 @@ impl LevelBuilder {
             let ch = *text.last().unwrap();
             text.truncate(text.len() - 1);
             state_num = self.find_state_number_for(&text);
-            if let Some(exists) = self.states[state_num as usize].transitions.0.insert(ch, last_state) {
-                assert_eq!(exists, last_state, "overwriting existing transition at pattern \"{}\"", pattern);
+            if let Some(exists) = self.states[state_num as usize]
+                .transitions
+                .0
+                .insert(ch, last_state)
+            {
+                assert_eq!(
+                    exists, last_state,
+                    "overwriting existing transition at pattern \"{}\"",
+                    pattern
+                );
                 break;
             }
         }
@@ -210,14 +222,16 @@ impl LevelBuilder {
         loop {
             let orig_len = self.states.len();
             // Used to map State records to the (first) index at which they occur.
-            let mut state_to_index = HashMap::<&State,i32>::new();
+            let mut state_to_index = HashMap::<&State, i32>::new();
             // Mapping of old->new state indexes, and whether each old state is
             // a duplicate that should be dropped.
-            let mut mappings = Vec::<(i32,bool)>::with_capacity(orig_len);
+            let mut mappings = Vec::<(i32, bool)>::with_capacity(orig_len);
             let mut next_new_index: i32 = 0;
-            for index in 0 .. self.states.len() {
+            for index in 0..self.states.len() {
                 // Find existing index for this state, or allocate the next new index to it.
-                let new_index = *state_to_index.entry(&self.states[index]).or_insert(next_new_index);
+                let new_index = *state_to_index
+                    .entry(&self.states[index])
+                    .or_insert(next_new_index);
                 // Record the mapping, and whether the state was a duplicate.
                 mappings.push((new_index, new_index != next_new_index));
                 // If we used next_new_index for this state, increment it.
@@ -232,7 +246,7 @@ impl LevelBuilder {
             }
             // Iterate over all the states, either deleting them or updating indexes
             // according to the mapping we created; then repeat the search.
-            for index in (0 .. self.states.len()).rev() {
+            for index in (0..self.states.len()).rev() {
                 if mappings[index].1 {
                     self.states.remove(index);
                 } else {
@@ -268,7 +282,7 @@ impl LevelBuilder {
 
         // Helper to map a byte string to its offset in the final data block, and
         // store the bytes into string_data unless using an already-existing string.
-        let mut string_to_offset = HashMap::<Vec<u8>,usize>::new();
+        let mut string_to_offset = HashMap::<Vec<u8>, usize>::new();
         let mut string_data = Vec::<u8>::new();
         let mut get_string_offset_for = |bytes: &Option<Vec<u8>>| -> u16 {
             if bytes.is_none() {
@@ -276,7 +290,9 @@ impl LevelBuilder {
             }
             assert!(bytes.as_ref().unwrap().len() < 256);
             let new_offset = string_data.len();
-            let offset = *string_to_offset.entry(bytes.as_ref().unwrap().clone()).or_insert(new_offset);
+            let offset = *string_to_offset
+                .entry(bytes.as_ref().unwrap().clone())
+                .or_insert(new_offset);
             if offset == new_offset {
                 string_data.push(bytes.as_ref().unwrap().len() as u8);
                 string_data.extend_from_slice(bytes.as_ref().unwrap().as_ref());
@@ -289,9 +305,16 @@ impl LevelBuilder {
         let mut nohyphen_string_offset: u16 = super::INVALID_STRING_OFFSET;
         let mut nohyphen_count: u16 = 0;
         if self.nohyphen.is_some() {
-            let nohyphen_strings: Vec<_> = self.nohyphen.as_ref().unwrap().split(',').map(|x| x.trim()).collect();
+            let nohyphen_strings: Vec<_> = self
+                .nohyphen
+                .as_ref()
+                .unwrap()
+                .split(',')
+                .map(|x| x.trim())
+                .collect();
             nohyphen_count = nohyphen_strings.len().try_into().unwrap();
-            nohyphen_string_offset = get_string_offset_for(&Some(nohyphen_strings.join("\0").as_bytes().to_vec()));
+            nohyphen_string_offset =
+                get_string_offset_for(&Some(nohyphen_strings.join("\0").as_bytes().to_vec()));
         }
 
         let mut state_data = Vec::<u8>::with_capacity(state_data_size);
@@ -425,8 +448,12 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
     // Create default first (compound-word) level if only one level was provided.
     // (Maybe this should be optional? Currently just copying libhyphen behavior.)
     if builders.len() == 1 {
-        let (lh_min, rh_min, clh_min, crh_min) =
-            (builders[0].lh_min, builders[0].rh_min, builders[0].clh_min, builders[0].crh_min);
+        let (lh_min, rh_min, clh_min, crh_min) = (
+            builders[0].lh_min,
+            builders[0].rh_min,
+            builders[0].clh_min,
+            builders[0].crh_min,
+        );
         builders.insert(0, LevelBuilder::new());
         builder = builders.first_mut().unwrap();
         builder.add_pattern("1-1");
@@ -436,8 +463,20 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
         builder.nohyphen = Some("',\u{2013},\u{2019},-".to_string());
         builder.lh_min = lh_min;
         builder.rh_min = rh_min;
-        builder.clh_min = if clh_min > 0 { clh_min } else if lh_min > 0 { lh_min } else { 3 };
-        builder.crh_min = if crh_min > 0 { crh_min } else if rh_min > 0 { rh_min } else { 3 };
+        builder.clh_min = if clh_min > 0 {
+            clh_min
+        } else if lh_min > 0 {
+            lh_min
+        } else {
+            3
+        };
+        builder.crh_min = if crh_min > 0 {
+            crh_min
+        } else if rh_min > 0 {
+            rh_min
+        } else {
+            3
+        };
     }
 
     // Put in fallback states in each builder.
@@ -453,7 +492,8 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
                     break;
                 }
             }
-            builder.states[*state_index as usize].fallback_state = builder.str_to_state[&fallback_key];
+            builder.states[*state_index as usize].fallback_state =
+                builder.str_to_state[&fallback_key];
         }
     }
 
@@ -498,12 +538,16 @@ fn write_hyf_file<T: Write>(hyf_file: &mut T, levels: Vec<LevelBuilder>) -> std:
 /// The public API to the compilation process: reads `dic_file` and writes compiled tables
 /// to `hyf_file`. The `compress` param determines whether extra processing to reduce the
 /// size of the output is performed.
-pub fn compile<T1: Read, T2: Write>(dic_file: T1, hyf_file: &mut T2, compress: bool) -> std::io::Result<()> {
+pub fn compile<T1: Read, T2: Write>(
+    dic_file: T1,
+    hyf_file: &mut T2,
+    compress: bool,
+) -> std::io::Result<()> {
     match read_dic_file(dic_file, compress) {
         Ok(dic) => write_hyf_file(hyf_file, dic),
         Err(e) => {
             warn!("parse error: {}", e);
-            return Err(Error::from(ErrorKind::InvalidData))
+            return Err(Error::from(ErrorKind::InvalidData));
         }
     }
 }

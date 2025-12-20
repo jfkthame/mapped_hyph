@@ -28,7 +28,10 @@ fn main() {
     println!("{}", hyph.hyphenate_word("photographic", '-'));
     println!("{}", hyph.hyphenate_word("photographical", '-'));
     println!("{}", hyph.hyphenate_word("photographically", '-'));
-    println!("{}", hyph.hyphenate_word("supercalifragilisticexpialidocious", '-'));
+    println!(
+        "{}",
+        hyph.hyphenate_word("supercalifragilisticexpialidocious", '-')
+    );
     println!("{}", hyph.hyphenate_word("o'dwyer", '='));
     println!("{}", hyph.hyphenate_word("o'callahan", '='));
     println!("{}", hyph.hyphenate_word("o’dwyer", '='));
