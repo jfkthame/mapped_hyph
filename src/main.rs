@@ -18,7 +18,7 @@ fn main() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
 
     println!("{}", hyph.hyphenate_word("haha", '-'));
     println!("{}", hyph.hyphenate_word("hahaha", '-'));
@@ -46,14 +46,14 @@ fn main() {
         _ => panic!("failed to load dictionary {}", "tests/compound.hyf"),
     };
 
-    let h2 = Hyphenator::new(&*dic2);
+    let h2 = Hyphenator::new(&dic2);
     println!("{}", h2.hyphenate_word("motorcycle", '='));
 
     let dic3 = match unsafe { mapped_hyph::load_file("tests/rhmin.hyf") } {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let h3 = Hyphenator::new(&*dic3);
+    let h3 = Hyphenator::new(&dic3);
     println!("{}", h3.hyphenate_word("övéit", '='));
     println!("{}", h3.hyphenate_word("అంగడిధర", '='));
 
@@ -61,7 +61,7 @@ fn main() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", "tests/num.hyf"),
     };
-    let h4 = Hyphenator::new(&*dic4);
+    let h4 = Hyphenator::new(&dic4);
 
     println!("{}", h4.hyphenate_word("123foobar123", '='));
     println!("{}", h4.hyphenate_word("123foobarfoobar", '='));

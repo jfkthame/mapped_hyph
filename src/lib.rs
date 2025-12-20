@@ -162,7 +162,7 @@ impl State {
             let next_prefix = format!("{}  ", prefix);
             dic.get_state(t.new_state_offset())
                 .unwrap()
-                .deep_show(&next_prefix, &dic);
+                .deep_show(&next_prefix, dic);
         }
     }
 }
@@ -188,7 +188,7 @@ fn is_utf8_trail_byte(byte: u8) -> bool {
 }
 
 fn is_ascii_digit(byte: u8) -> bool {
-    byte <= b'9' && byte >= b'0'
+    (b'0'..=b'9').contains(&byte)
 }
 
 fn is_odd(byte: u8) -> bool {
@@ -253,7 +253,7 @@ impl<'a> Level<'a> {
         if offset == INVALID_STRING_OFFSET as usize {
             return &[];
         }
-        let string_base = self.string_data_base() as usize + offset;
+        let string_base = self.string_data_base() + offset;
         // TODO: move this to the validation function.
         debug_assert!(string_base < self.data.len());
         if string_base + 1 > self.data.len() {
@@ -273,7 +273,7 @@ impl<'a> Level<'a> {
     // return them as a vector of individual byte slices.
     fn nohyphen(&self) -> Vec<&[u8]> {
         let string_offset = self.nohyphen_string_offset();
-        let nohyph_str = self.string_at_offset(string_offset as usize);
+        let nohyph_str = self.string_at_offset(string_offset);
         if nohyph_str.is_empty() {
             return vec![];
         }
@@ -677,7 +677,7 @@ impl<'a> Hyphenator<'a> {
 pub unsafe fn load_file(dic_path: &str) -> Option<Mmap> {
     let file = File::open(dic_path).ok()?;
     let dic = Mmap::map(&file).ok()?;
-    let hyph = Hyphenator(&*dic);
+    let hyph = Hyphenator(&dic);
     if hyph.is_valid_hyphenator() {
         return Some(dic);
     }

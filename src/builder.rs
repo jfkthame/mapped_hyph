@@ -353,7 +353,7 @@ impl LevelBuilder {
             string_data.push(0);
         }
 
-        let total_size = super::LEVEL_HEADER_SIZE as usize + state_data_size + string_data.len();
+        let total_size = super::LEVEL_HEADER_SIZE + state_data_size + string_data.len();
         let mut result = Vec::<u8>::with_capacity(total_size);
 
         let state_data_base: u32 = super::LEVEL_HEADER_SIZE as u32;
@@ -518,7 +518,7 @@ fn write_hyf_file<T: Write>(hyf_file: &mut T, levels: Vec<LevelBuilder>) -> std:
         flattened.push(level.flatten());
     }
     // Write file header: magic number, count of levels.
-    hyf_file.write_all(&[b'H', b'y', b'f', b'0'])?;
+    hyf_file.write_all(b"Hyf0")?;
     let level_count: u32 = flattened.len() as u32;
     hyf_file.write_all(&level_count.to_le_bytes())?;
     // Write array of offsets to each level. First level will begin immediately
@@ -530,7 +530,7 @@ fn write_hyf_file<T: Write>(hyf_file: &mut T, levels: Vec<LevelBuilder>) -> std:
     }
     // Write the flattened data for each level.
     for flat in &flattened {
-        hyf_file.write_all(&flat)?;
+        hyf_file.write_all(flat)?;
     }
     Ok(())
 }
@@ -547,7 +547,7 @@ pub fn compile<T1: Read, T2: Write>(
         Ok(dic) => write_hyf_file(hyf_file, dic),
         Err(e) => {
             warn!("parse error: {}", e);
-            return Err(Error::from(ErrorKind::InvalidData));
+            Err(Error::from(ErrorKind::InvalidData))
         }
     }
 }
