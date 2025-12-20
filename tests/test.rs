@@ -10,7 +10,7 @@ fn basic_tests() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("haha", '-'), "haha");
     assert_eq!(hyph.hyphenate_word("hahaha", '-'), "ha-haha");
     assert_eq!(hyph.hyphenate_word("photo", '-'), "photo");
@@ -42,7 +42,7 @@ fn base() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     use std::fs::File;
     use std::io::{BufRead, BufReader};
     let words: Vec<String> = {
@@ -65,7 +65,7 @@ fn compound() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("motorcycle", '-'), "mo-tor-cy-cle");
 }
 
@@ -76,7 +76,7 @@ fn compound4() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("motorcycle", '-'), "motor-cycle");
 }
 
@@ -87,7 +87,7 @@ fn compound5() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("postea", '-'), "post-e-a");
 }
 
@@ -98,7 +98,7 @@ fn compound6() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("meaque", '-'), "me-a-que");
 }
 
@@ -109,7 +109,7 @@ fn settings2() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("őőőőőőő", '='), "ő=ő=ő=ő=ő=ő=ő");
 }
 
@@ -120,7 +120,7 @@ fn settings3() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("őőőőőőő", '='), "őő=ő=ő=ő=őő");
 }
 
@@ -131,7 +131,7 @@ fn hyphen() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(
         hyph.hyphenate_word("foobar'foobar-foobar’foobar", '='),
         "foobar'foobar-foobar’foobar"
@@ -145,7 +145,7 @@ fn lhmin() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("miért", '='), "mi=ért");
 }
 
@@ -156,7 +156,7 @@ fn rhmin() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("övéit", '='), "övéit");
     assert_eq!(hyph.hyphenate_word("అంగడిధర", '='), "అం=గ=డిధర");
 }
@@ -168,7 +168,7 @@ fn num() {
         Some(dic) => dic,
         _ => panic!("failed to load dictionary {}", dic_path),
     };
-    let hyph = Hyphenator::new(&*dic);
+    let hyph = Hyphenator::new(&dic);
     assert_eq!(hyph.hyphenate_word("foobar", '='), "foobar");
     assert_eq!(hyph.hyphenate_word("foobarfoobar", '='), "foobar=foobar");
     assert_eq!(hyph.hyphenate_word("barfoobarfoo", '='), "barfoo=barfoo");
