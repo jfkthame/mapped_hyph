@@ -180,7 +180,7 @@ impl LevelBuilder {
         // Create the new state, or add pattern into an existing state
         // (which should not already have a match_string).
         let mut state_num = self.find_state_number_for(&text);
-        let mut state = &mut self.states[state_num as usize];
+        let state = &mut self.states[state_num as usize];
         if state.match_string.is_some() {
             warn!("duplicate pattern \"{}\" discarded", pattern);
             return;
