@@ -10,18 +10,19 @@
 //! Functions to compile human-readable patterns into a mapped_hyph
 //! flattened representation of the hyphenation state machine.
 
-use std::collections::HashMap;
 use std::convert::TryInto;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
 
-// Wrap a HashMap so that we can implement the Hash trait.
+use rustc_hash::FxHashMap;
+
+// Wrap a FxHashMap so that we can implement the Hash trait.
 #[derive(PartialEq, Eq, Clone)]
-struct TransitionMap(HashMap<u8, i32>);
+struct TransitionMap(FxHashMap<u8, i32>);
 
 impl TransitionMap {
     fn new() -> TransitionMap {
-        TransitionMap(HashMap::<u8, i32>::new())
+        TransitionMap(FxHashMap::<u8, i32>::default())
     }
 }
 
@@ -65,7 +66,7 @@ impl State {
 /// to create the flattened output.
 struct LevelBuilder {
     states: Vec<State>,
-    str_to_state: HashMap<Vec<u8>, i32>,
+    str_to_state: FxHashMap<Vec<u8>, i32>,
     encoding: Option<String>,
     nohyphen: Option<String>,
     lh_min: u8,
@@ -78,7 +79,7 @@ impl LevelBuilder {
     fn new() -> LevelBuilder {
         let mut result = LevelBuilder {
             states: Vec::<State>::new(),
-            str_to_state: HashMap::<Vec<u8>, i32>::new(),
+            str_to_state: FxHashMap::<Vec<u8>, i32>::default(),
             encoding: None,
             nohyphen: None,
             lh_min: 0,
@@ -219,7 +220,7 @@ impl LevelBuilder {
         loop {
             let orig_len = self.states.len();
             // Used to map State records to the (first) index at which they occur.
-            let mut state_to_index = HashMap::<&State, i32>::new();
+            let mut state_to_index = FxHashMap::<&State, i32>::default();
             // Mapping of old->new state indexes, and whether each old state is
             // a duplicate that should be dropped.
             let mut mappings = Vec::<(i32, bool)>::with_capacity(orig_len);
@@ -279,7 +280,7 @@ impl LevelBuilder {
 
         // Helper to map a byte string to its offset in the final data block, and
         // store the bytes into string_data unless using an already-existing string.
-        let mut string_to_offset = HashMap::<Vec<u8>, usize>::new();
+        let mut string_to_offset = FxHashMap::<Vec<u8>, usize>::default();
         let mut string_data = Vec::<u8>::new();
         let mut get_string_offset_for = |bytes: Option<&[u8]>| -> u16 {
             let Some(bytes) = bytes else {
