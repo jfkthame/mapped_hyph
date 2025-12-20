@@ -314,8 +314,10 @@ impl LevelBuilder {
 
         let mut state_data = Vec::<u8>::with_capacity(state_data_size);
         for state in &self.states {
-            state_data.extend(&get_state_offset_for(state.fallback_state).to_le_bytes());
-            state_data.extend(&get_string_offset_for(state.match_string.as_deref()).to_le_bytes());
+            state_data.extend_from_slice(&get_state_offset_for(state.fallback_state).to_le_bytes());
+            state_data.extend_from_slice(
+                &get_string_offset_for(state.match_string.as_deref()).to_le_bytes(),
+            );
             state_data.push(state.transitions.0.len() as u8);
             // Determine whether to use an extended state record, and if so add the
             // replacement string and index fields.
@@ -323,8 +325,9 @@ impl LevelBuilder {
                 state_data.push(0);
             } else {
                 state_data.push(1);
-                state_data
-                    .extend(&get_string_offset_for(state.repl_string.as_deref()).to_le_bytes());
+                state_data.extend_from_slice(
+                    &get_string_offset_for(state.repl_string.as_deref()).to_le_bytes(),
+                );
                 state_data.push(state.repl_index as u8);
                 state_data.push(state.repl_cut as u8);
             }
@@ -355,17 +358,17 @@ impl LevelBuilder {
         let state_data_base: u32 = super::LEVEL_HEADER_SIZE as u32;
         let string_data_base: u32 = state_data_base + state_data_size as u32;
 
-        result.extend(&state_data_base.to_le_bytes());
-        result.extend(&string_data_base.to_le_bytes());
-        result.extend(&nohyphen_string_offset.to_le_bytes());
-        result.extend(&nohyphen_count.to_le_bytes());
+        result.extend_from_slice(&state_data_base.to_le_bytes());
+        result.extend_from_slice(&string_data_base.to_le_bytes());
+        result.extend_from_slice(&nohyphen_string_offset.to_le_bytes());
+        result.extend_from_slice(&nohyphen_count.to_le_bytes());
         result.push(self.lh_min);
         result.push(self.rh_min);
         result.push(self.clh_min);
         result.push(self.crh_min);
 
-        result.extend(state_data.iter());
-        result.extend(string_data.iter());
+        result.extend_from_slice(&state_data);
+        result.extend_from_slice(&string_data);
 
         assert_eq!(result.len(), total_size);
 
