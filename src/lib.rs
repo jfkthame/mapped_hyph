@@ -207,9 +207,9 @@ struct Level<'a> {
     string_data_base_: usize,
 }
 
-impl Level<'_> {
+impl<'a> Level<'a> {
     // Constructor that initializes our cache variables.
-    fn new(data: &[u8]) -> Level {
+    fn new(data: &'a [u8]) -> Self {
         Level {
             data,
             state_data_base_: u32::from_le_bytes(*array_ref!(data, 0, 4)) as usize,
@@ -463,13 +463,13 @@ impl Level<'_> {
 /// that identify possible break positions within a word.
 pub struct Hyphenator<'a>(&'a [u8]);
 
-impl Hyphenator<'_> {
+impl<'a> Hyphenator<'a> {
     /// Return a Hyphenator that wraps the given buffer.
     /// This does *not* check that the given buffer is in fact a valid hyphenation table.
     /// Use `is_valid_hyphenator()` to determine whether it is usable.
     /// (Calling hyphenation methods on a Hyphenator that wraps arbitrary,
     /// unvalidated data is not unsafe, but may panic.)
-    pub fn new(buffer: &[u8]) -> Hyphenator {
+    pub fn new(buffer: &'a [u8]) -> Self {
         Hyphenator(buffer)
     }
 
@@ -480,7 +480,7 @@ impl Hyphenator<'_> {
     fn num_levels(&self) -> usize {
         u32::from_le_bytes(*array_ref!(self.0, 4, 4)) as usize
     }
-    fn level(&self, i: usize) -> Level {
+    fn level(&self, i: usize) -> Level<'a> {
         let offset = u32::from_le_bytes(*array_ref!(self.0, FILE_HEADER_SIZE + 4 * i, 4)) as usize;
         let limit = if i == self.num_levels() - 1 {
             self.0.len()
