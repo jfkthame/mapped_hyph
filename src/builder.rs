@@ -245,19 +245,20 @@ impl<'a> LevelBuilder<'a> {
             }
             // Iterate over all the states, either deleting them or updating indexes
             // according to the mapping we created; then repeat the search.
-            for index in (0..self.states.len()).rev() {
-                if mappings[index].1 {
-                    self.states.remove(index);
-                } else {
-                    let state = &mut self.states[index];
+            let mut index = 0;
+            self.states.retain_mut(|state| {
+                let (new_state, is_duplicate) = mappings[index];
+                if !is_duplicate {
                     if state.fallback_state != -1 {
-                        state.fallback_state = mappings[state.fallback_state as usize].0;
+                        state.fallback_state = new_state;
                     }
-                    for t in state.transitions.0.iter_mut() {
-                        t.1 = mappings[t.1 as usize].0;
+                    for (_, dest_state) in &mut state.transitions.0 {
+                        *dest_state = mappings[*dest_state as usize].0;
                     }
                 }
-            }
+                index += 1;
+                !is_duplicate
+            });
         }
     }
 
