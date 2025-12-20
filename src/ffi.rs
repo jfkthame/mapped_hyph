@@ -74,7 +74,7 @@ pub unsafe extern "C" fn mapped_hyph_load_dictionary(path: *const c_char) -> *co
 /// `mapped_hyph_load_dictionary`, and not previously freed.
 #[no_mangle]
 pub unsafe extern "C" fn mapped_hyph_free_dictionary(dic: *mut HyphDic) {
-    Box::from_raw(dic);
+    drop(Box::from_raw(dic));
 }
 
 /// C-callable function to find hyphenation values for a given `word`,
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn mapped_hyph_is_valid_hyphenator(dic_buf: *const u8, dic
 /// a `mapped_hyph_compile_...` function, and not previously freed.
 #[no_mangle]
 pub unsafe extern "C" fn mapped_hyph_free_compiled_data(data: *mut CompiledData) {
-    Box::from_raw(data);
+    drop(Box::from_raw(data));
 }
 
 // Helper for the compilation functions (from either memory buffer or file path).
