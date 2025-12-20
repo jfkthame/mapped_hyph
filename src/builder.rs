@@ -11,30 +11,27 @@
 //! flattened representation of the hyphenation state machine.
 
 use std::convert::TryInto;
-use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 // Wrap a FxHashMap so that we can implement the Hash trait.
-#[derive(PartialEq, Eq, Clone)]
-struct TransitionMap(FxHashMap<u8, i32>);
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct TransitionMap(SmallVec<[(u8, i32); 2]>);
 
 impl TransitionMap {
     fn new() -> TransitionMap {
-        TransitionMap(FxHashMap::<u8, i32>::default())
+        TransitionMap(SmallVec::new())
     }
-}
 
-impl Hash for TransitionMap {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // We only look at the values here; that's likely to be enough
-        // for a reasonable hash.
-        let mut transitions: Vec<&i32> = self.0.values().collect();
-        transitions.sort();
-        for t in transitions {
-            t.hash(state);
+    fn insert(&mut self, ch: u8, state_num: i32) -> Option<i32> {
+        match self.0.binary_search_by_key(&ch, |(c, _)| *c) {
+            Ok(i) => Some(std::mem::replace(&mut self.0[i].1, state_num)),
+            Err(i) => {
+                self.0.insert(i, (ch, state_num));
+                None
+            }
         }
     }
 }
@@ -201,7 +198,6 @@ impl LevelBuilder {
             state_num = self.find_state_number_for(&text);
             if let Some(exists) = self.states[state_num as usize]
                 .transitions
-                .0
                 .insert(ch, last_state)
             {
                 assert_eq!(
@@ -254,7 +250,7 @@ impl LevelBuilder {
                         state.fallback_state = mappings[state.fallback_state as usize].0;
                     }
                     for t in state.transitions.0.iter_mut() {
-                        *t.1 = mappings[*t.1 as usize].0;
+                        t.1 = mappings[t.1 as usize].0;
                     }
                 }
             }
@@ -334,17 +330,13 @@ impl LevelBuilder {
                 state_data.push(state.repl_cut as u8);
             }
             // Collect transitions into an array so we can sort them.
-            let mut transitions = vec![];
-            for (key, value) in state.transitions.0.iter() {
-                transitions.push((*key, get_state_offset_for(*value)))
-            }
-            transitions.sort();
-            for t in transitions {
-                // New state offset is stored as a 24-bit value, so we do this manually.
-                state_data.push((t.1 & 0xff) as u8);
-                state_data.push(((t.1 >> 8) & 0xff) as u8);
-                state_data.push(((t.1 >> 16) & 0xff) as u8);
-                state_data.push(t.0);
+            for (key, value) in &state.transitions.0 {
+                let dest_state_offset = get_state_offset_for(*value);
+                // Destination state offset is stored as a 24-bit value, so we do this manually.
+                state_data.push((dest_state_offset & 0xff) as u8);
+                state_data.push(((dest_state_offset >> 8) & 0xff) as u8);
+                state_data.push(((dest_state_offset >> 16) & 0xff) as u8);
+                state_data.push(*key);
             }
         }
         assert_eq!(state_data.len(), state_data_size);
