@@ -485,15 +485,15 @@ fn read_dic_file<T: Read>(dic_file: T, compress: bool) -> Result<Vec<LevelBuilde
             if key.is_empty() {
                 continue;
             }
-            let mut fallback_key = key.clone();
+            let mut fallback_key = &key[..];
             while !fallback_key.is_empty() {
-                fallback_key.remove(0);
-                if builder.str_to_state.contains_key(&fallback_key) {
+                fallback_key = &fallback_key[1..];
+                if builder.str_to_state.contains_key(fallback_key) {
                     break;
                 }
             }
             builder.states[*state_index as usize].fallback_state =
-                builder.str_to_state[&fallback_key];
+                builder.str_to_state[fallback_key];
         }
     }
 
